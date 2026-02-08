@@ -7,6 +7,7 @@ import dole.Constants;
 import dole.crypto.CryptoUtils;
 import dole.crypto.ProtocolSerializer;
 import org.json.JSONObject;
+import org.json.JSONException;
 
 public class LedgerEntry {
 
@@ -53,11 +54,15 @@ public class LedgerEntry {
     }
 
     public static LedgerEntry fromJSON(String json) {
-        JSONObject obj = new JSONObject(json);
-        return fromJSONObject(obj);
+        try {
+            JSONObject obj = new JSONObject(json);
+            return fromJSONObject(obj);
+        } catch (JSONException e) {
+            throw new IllegalArgumentException("Invalid JSON data for LedgerEntry", e);
+        }
     }
 
-    private static LedgerEntry fromJSONObject(JSONObject obj) {
+    private static LedgerEntry fromJSONObject(JSONObject obj) throws JSONException {
         int seq = obj.getInt(Constants.KEY_SEQ);
         int goc = obj.getInt(Constants.KEY_GOC);
 
@@ -127,26 +132,6 @@ public class LedgerEntry {
             return false;
         }
         return CryptoUtils.verifySignature(rootCA, attachmentPublicKey, attachmentCertificate);
-    }
-
-    public JSONObject toJSONObject() {
-        JSONObject json = new JSONObject();
-        json.put(Constants.KEY_SEQ, this.seq);
-        json.put(Constants.KEY_PREV_HASH, CryptoUtils.bytesToHex(getPrevHash()));
-        json.put(Constants.KEY_TYPE, Constants.OperationType.fromCode(this.type).name());
-        json.put(Constants.KEY_AUTHOR, getAuthorID());
-        json.put(Constants.KEY_TARGET, getTargetID());
-        json.put(Constants.KEY_GOC, this.goc);
-        json.put(Constants.KEY_SIGNATURE, CryptoUtils.bytesToHex(this.signature));
-
-        if (attachmentPublicKey != null) json.put(Constants.KEY_PUBKEY, CryptoUtils.bytesToHex(attachmentPublicKey));
-        if (attachmentCertificate != null) json.put(Constants.KEY_CERT, CryptoUtils.bytesToHex(attachmentCertificate));
-
-        return json;
-    }
-
-    public String toJSON() {
-        return toJSONObject().toString();
     }
 
     public void setAttachments(byte[] cert, byte[] pubKey) {

@@ -45,6 +45,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
@@ -132,20 +137,32 @@ fun SettingsScreen(
     }
 
     LaunchedEffect(step) {
-        if (step == SettingsStep.PIN_ENTER || step == SettingsStep.PIN_CONFIRM) {
-            focusRequester.requestFocus()
-        }
+        if (step != SettingsStep.NAME) focusRequester.requestFocus()
     }
 
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyUp && event.key == Key.Escape) {
+                    if (!isLoading) {
+                        if (step == SettingsStep.MENU) {
+                            onBack()
+                        } else if (step != SettingsStep.SUCCESS) {
+                            resetToMenu()
+                        }
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
             .pinInputHandler(
                 focusRequester = focusRequester,
                 enabled = !isLoading && (step == SettingsStep.PIN_ENTER || step == SettingsStep.PIN_CONFIRM),
                 onDigit = { handleDigit(it) },
                 onDelete = { if (pinInput.isNotEmpty()) pinInput = pinInput.dropLast(1) },
-                onEscape = { if (!isLoading && step != SettingsStep.SUCCESS) resetToMenu() }
+                onEscape = { }
             )
     ) {
         AuthSplitLayout(

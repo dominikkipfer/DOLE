@@ -1,5 +1,4 @@
 plugins {
-    `java-library`
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.jetbrains.compose)
     alias(libs.plugins.kotlin.compose)
@@ -12,23 +11,16 @@ java {
 }
 
 dependencies {
-    api(project(":common"))
-
-    api(libs.runtime)
-    api(libs.foundation)
-    api(libs.material3)
-    api(libs.material.icons.extended)
-    api(libs.ui)
-    api(libs.components.resources)
-    api(libs.ui.tooling.preview)
-    api(libs.lifecycle.viewmodel.compose)
-
-    api(libs.slf4j.simple)
-    api(libs.json)
+    implementation(project(":common"))
+    implementation(libs.json)
     implementation(libs.gson)
-}
+    implementation(libs.slf4j.simple)
 
-compose.resources {
-    publicResClass = true
-    packageOfResClass = "dole.resources"
+    implementation(libs.runtime)
+    implementation(libs.foundation)
+    implementation(libs.material.icons.extended)
+    implementation(libs.material3)
+    implementation(libs.ui)
+    implementation(libs.components.resources)
+    implementation(libs.lifecycle.viewmodel.compose)
 }

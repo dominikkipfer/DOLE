@@ -97,7 +97,7 @@ fun AuthSplitLayout(
         modifier = modifier.fillMaxSize().background(Color(0xFFF2F2F7)),
         contentAlignment = Alignment.Center
     ) {
-        val isWideLayout = maxWidth > 600.dp || maxWidth > maxHeight
+        val isWideLayout = maxWidth > maxHeight
         val topPadding = if (isWideLayout) 16.dp else 40.dp
         val cancelButtonHeight = 48.dp
 

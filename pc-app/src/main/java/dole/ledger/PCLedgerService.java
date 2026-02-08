@@ -1,7 +1,9 @@
 package dole.ledger;
 
 import java.io.File;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -27,9 +29,16 @@ public class PCLedgerService implements LedgerService {
     private AutoCloseable activeObserver;
     private volatile boolean isRunning = true;
 
+    private String currentObservedId;
+    private int currentLastSeq = 0;
+    private Map<String, Integer> currentLastReceivedGocs = new HashMap<>();
+
+    private Consumer<List<LedgerEntry>> currentLogConsumer;
+    private boolean isFullHistoryMode = false;
+
     public PCLedgerService(String storagePath, String appId, String token) {
         File workingDir = new File(storagePath, "ditto_data");
-        workingDir.mkdirs();
+        if (!workingDir.exists()) workingDir.mkdirs();
 
         DittoConfig config = new DittoConfig.Builder(appId)
                 .serverConnect(Constants.DITTO_AUTH_URL)
@@ -58,9 +67,7 @@ public class PCLedgerService implements LedgerService {
     private void startSyncLoop(String token) {
         Thread connectionThread = new Thread(() -> {
             boolean isConnected = false;
-
-            logger.info("Starting background connection loop...");
-
+            logger.info("Starting background connection loop");
             while (!isConnected && isRunning) {
                 try {
                     Objects.requireNonNull(this.ditto.getAuth())
@@ -72,17 +79,16 @@ public class PCLedgerService implements LedgerService {
                     isConnected = true;
                     logger.info("ONLINE: Ditto Sync Started successfully.");
                 } catch (Exception e) {
-                    logger.warn("OFFLINE: Could not connect to Cloud. Retrying in 5 seconds... (Error: {})", e.getMessage());
+                    logger.warn("OFFLINE: Retrying in 5s Error: {}", e.getMessage());
                     try {
                         Thread.sleep(5000);
-                    } catch (InterruptedException interruptedException) {
+                    } catch (InterruptedException ie) {
                         Thread.currentThread().interrupt();
                         break;
                     }
                 }
             }
         });
-
         connectionThread.setDaemon(true);
         connectionThread.setName("DittoConnectionManager");
         connectionThread.start();
@@ -92,21 +98,17 @@ public class PCLedgerService implements LedgerService {
     public void saveEntry(LedgerEntry entry) {
         String docId = entry.getAuthorID() + "_" + entry.seq;
         String query = "INSERT INTO %s DOCUMENTS (:newLog) ON ID CONFLICT DO UPDATE".formatted(Constants.COLLECTION);
-
         String dbTarget = entry.getTargetID();
-        if (dbTarget == null || dbTarget.isEmpty() || dbTarget.matches("0+")) {
-            dbTarget = entry.getAuthorID();
-        }
 
         var builder = DittoCborSerializable.Dictionary.buildDictionary()
                                                       .put("_id", docId)
                                                       .put("type", Constants.OperationType.fromCode(entry.type).name())
                                                       .put("seq", entry.seq)
                                                       .put("author", entry.getAuthorID())
-                                                      .put("target", dbTarget);
-
-        builder.put("goc", entry.goc).put("prevHash", CryptoUtils.bytesToHex(entry.getPrevHash()))
-               .put("signature", CryptoUtils.bytesToHex(entry.getSignature()));
+                                                      .put("target", dbTarget)
+                                                      .put("goc", entry.goc)
+                                                      .put("prevHash", CryptoUtils.bytesToHex(entry.getPrevHash()))
+                                                      .put("signature", CryptoUtils.bytesToHex(entry.getSignature()));
 
         if (entry.getAttachmentPublicKey() != null) {
             builder.put("pubKey", CryptoUtils.bytesToHex(entry.getAttachmentPublicKey()));
@@ -126,35 +128,76 @@ public class PCLedgerService implements LedgerService {
     }
 
     @Override
-    public void observeRelevantLogs(String myId, Consumer<List<LedgerEntry>> onLogsUpdated) {
+    public synchronized void observeRelevantLogs(String myId, int lastKnownSeq, Map<String, Integer> lastReceivedGocs, Consumer<List<LedgerEntry>> onLogsUpdated) {
+        this.currentObservedId = myId;
+        this.currentLastSeq = lastKnownSeq;
+        this.currentLastReceivedGocs = (lastReceivedGocs != null) ? new HashMap<>(lastReceivedGocs) : new HashMap<>();
+        this.currentLogConsumer = onLogsUpdated;
+        restartObserver();
+    }
+
+    @Override
+    public synchronized void setHistorySyncMode(boolean loadFullHistory) {
+        if (this.isFullHistoryMode == loadFullHistory) return;
+        this.isFullHistoryMode = loadFullHistory;
+        logger.info("Switching Sync Mode. Full History: {}", loadFullHistory);
+        restartObserver();
+    }
+
+    private void restartObserver() {
         closeObserver();
+        if (currentObservedId == null || currentLogConsumer == null) return;
 
-        String syncQuery = "SELECT * FROM %s WHERE author = :myId OR target = :myId OR seq = 0"
-                .formatted(Constants.COLLECTION);
+        String whereString = buildWhereClause();
+        String syncQuery = "SELECT * FROM %s WHERE %s".formatted(Constants.COLLECTION, whereString);
+        String observerQuery = "SELECT * FROM %s WHERE %s ORDER BY seq ASC".formatted(Constants.COLLECTION, whereString);
 
-        String observerQuery = "SELECT * FROM %s WHERE author = :myId OR target = :myId OR seq = 0 ORDER BY seq ASC"
-                .formatted(Constants.COLLECTION);
+        logger.debug("Sync Query: {}", syncQuery);
 
-        var args = DittoCborSerializable.Dictionary.buildDictionary().put("myId", myId).build();
+        var args = DittoCborSerializable.Dictionary.buildDictionary()
+                                                   .put("myId", currentObservedId).put("lastSeq", currentLastSeq).build();
 
         try {
             try {
                 this.activeSubscription = this.ditto.getSync().registerSubscription(syncQuery, args);
             } catch (Exception e) {
-                logger.warn("Subscription registration pending (likely offline): {}", e.getMessage());
+                logger.warn("Subscription pending/failed: {}", e.getMessage());
             }
 
             this.activeObserver = this.ditto.getStore().registerObserver(observerQuery, args, result -> {
                 List<LedgerEntry> entries = result.getItems().stream()
                                                   .map(this::mapToLedgerEntry)
                                                   .filter(Objects::nonNull)
+                                                  .filter(this::isLogRelevant)
                                                   .collect(Collectors.toList());
 
-                onLogsUpdated.accept(entries);
+                if (!entries.isEmpty()) currentLogConsumer.accept(entries);
             });
         } catch (Exception e) {
             logger.error("Failed to register observer", e);
         }
+    }
+
+    private String buildWhereClause() {
+        if (isFullHistoryMode) {
+            return "author = :myId OR target = :myId OR seq = 0";
+        } else {
+            return "(seq = 0) " + "OR (author = :myId AND seq > :lastSeq) " + "OR (target = :myId)";
+        }
+    }
+
+    private boolean isLogRelevant(LedgerEntry entry) {
+        if (isFullHistoryMode) return true;
+        if (entry.seq == 0) return true;
+
+        if (entry.getAuthorID().equals(currentObservedId)) return entry.seq > currentLastSeq;
+        if (entry.getTargetID().equals(currentObservedId)) {
+            Integer storedGoc = currentLastReceivedGocs.get(entry.getAuthorID());
+            int lastKnownGoc = (storedGoc != null) ? storedGoc : -1;
+            return entry.goc > lastKnownGoc;
+        }
+
+        return false;
     }
 
     private LedgerEntry mapToLedgerEntry(DittoQueryResultItem item) {
@@ -192,22 +235,34 @@ public class PCLedgerService implements LedgerService {
         }
     }
 
+    @Override
+    public synchronized void stopObserving() {
+        logger.info("Stopping active observation.");
+        closeObserver();
+        this.currentObservedId = null;
+        this.currentLogConsumer = null;
+        this.currentLastReceivedGocs.clear();
+        this.isFullHistoryMode = false;
+    }
+
     private void closeObserver() {
         try {
             if (activeSubscription != null) activeSubscription.close();
             if (activeObserver != null) activeObserver.close();
+            activeSubscription = null;
+            activeObserver = null;
         } catch (Exception ignored) {}
     }
 
     @Override
     public synchronized void close() {
         isRunning = false;
-        closeObserver();
+        stopObserving();
         if (this.ditto != null) {
             try {
                 this.ditto.stopSync();
                 this.ditto.close();
-            } catch(Exception e) {
+            } catch (Exception e) {
                 logger.error("Error closing Ditto", e);
             }
         }

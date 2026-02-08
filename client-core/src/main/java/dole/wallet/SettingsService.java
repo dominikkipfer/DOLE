@@ -29,7 +29,11 @@ public class SettingsService {
 
     private final Map<String, List<String>> pendingActions = new ConcurrentHashMap<>();
     private final Map<String, Map<String, Integer>> lastReceivedTx = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, Integer>> lastSentTx = new ConcurrentHashMap<>();
     private final Map<String, Integer> savedBalances = new ConcurrentHashMap<>();
+
+    private final Map<String, Integer> knownMinted = new ConcurrentHashMap<>();
+    private final Map<String, Integer> knownBurned = new ConcurrentHashMap<>();
 
     private LedgerState initialLedgerState = new LedgerState();
     private Ledger activeLedger;
@@ -44,9 +48,33 @@ public class SettingsService {
 
     public void attachLedger(Ledger ledger) {
         this.activeLedger = ledger;
-        if (this.initialLedgerState != null) {
-            ledger.initialize(this.initialLedgerState);
+        if (this.initialLedgerState != null) ledger.initialize(this.initialLedgerState);
+    }
+
+    public AccountState getInitialAccountState(String userId) {
+        AccountState state = new AccountState();
+        if (initialLedgerState != null && initialLedgerState.states.containsKey(userId)) {
+            state = initialLedgerState.states.get(userId);
         }
+        state.totalMinted = Math.max(state.totalMinted, knownMinted.getOrDefault(userId, 0));
+        state.totalBurned = Math.max(state.totalBurned, knownBurned.getOrDefault(userId, 0));
+        return state;
+    }
+
+    public void updateAccountState(String userId, int mintGoc, int burnGoc) {
+        knownMinted.merge(userId, mintGoc, Math::max);
+        knownBurned.merge(userId, burnGoc, Math::max);
+    }
+
+    public int getLastKnownSeq(String userId) {
+        if (activeLedger != null) {
+            LedgerState state = activeLedger.exportState();
+            if (state.states.containsKey(userId)) return state.states.get(userId).lastSeq;
+        }
+        if (initialLedgerState != null && initialLedgerState.states.containsKey(userId)) {
+            return initialLedgerState.states.get(userId).lastSeq;
+        }
+        return 0;
     }
 
     public void saveBalance(String userId, int balance) {
@@ -60,8 +88,11 @@ public class SettingsService {
 
     public List<String> getKnownPeers(String myId) {
         Set<String> peers = new HashSet<>();
-        Map<String, Integer> senders = lastReceivedTx.get(myId);
-        if (senders != null) peers.addAll(senders.keySet());
+        Map<String, Integer> received = lastReceivedTx.get(myId);
+        if (received != null) peers.addAll(received.keySet());
+
+        Map<String, Integer> sent = lastSentTx.get(myId);
+        if (sent != null) peers.addAll(sent.keySet());
 
         for (StoredAccount acc : accounts) {
             if (!acc.id().equals(myId)) peers.add(acc.id());
@@ -80,7 +111,10 @@ public class SettingsService {
         accounts.removeIf(acc -> acc.id().equals(id));
         pendingActions.remove(id);
         lastReceivedTx.remove(id);
+        lastSentTx.remove(id);
         savedBalances.remove(id);
+        knownMinted.remove(id);
+        knownBurned.remove(id);
         persist();
     }
 
@@ -98,13 +132,20 @@ public class SettingsService {
         return new HashMap<>(lastReceivedTx.getOrDefault(userId, new HashMap<>()));
     }
 
-    public void updateLastReceivedGoc(String myId, String senderId, int newGoc) {
-        Map<String, Integer> senderMap = lastReceivedTx.computeIfAbsent(myId, k -> new HashMap<>());
-        Integer current = senderMap.getOrDefault(senderId, -1);
-        if (newGoc > current) {
-            senderMap.put(senderId, newGoc);
-            persist();
-        }
+    public Map<String, Integer> getLastSentGocs(String userId) {
+        return new HashMap<>(lastSentTx.getOrDefault(userId, new HashMap<>()));
+    }
+
+    public void importLastReceivedGocs(String myId, Map<String, Integer> updates) {
+        if (updates == null || updates.isEmpty()) return;
+        Map<String, Integer> map = lastReceivedTx.computeIfAbsent(myId, k -> new HashMap<>());
+        updates.forEach((peerId, newGoc) -> map.merge(peerId, newGoc, Math::max));
+    }
+
+    public void importLastSentGocs(String myId, Map<String, Integer> updates) {
+        if (updates == null || updates.isEmpty()) return;
+        Map<String, Integer> map = lastSentTx.computeIfAbsent(myId, k -> new HashMap<>());
+        updates.forEach((peerId, newGoc) -> map.merge(peerId, newGoc, Math::max));
     }
 
     public synchronized void persist() {
@@ -125,24 +166,32 @@ public class SettingsService {
             if (!map.isEmpty()) exportMap.computeIfAbsent(id, k -> new CombinedUserData()).lastReceivedTx = new HashMap<>(map);
         });
 
-        savedBalances.forEach((id, bal) -> {
-            exportMap.computeIfAbsent(id, k -> new CombinedUserData()).savedBalance = bal;
+        lastSentTx.forEach((id, map) -> {
+            if (!map.isEmpty()) exportMap.computeIfAbsent(id, k -> new CombinedUserData()).lastSentTx = new HashMap<>(map);
         });
+
+        savedBalances.forEach((id, bal) -> exportMap.computeIfAbsent(id, k -> new CombinedUserData()).savedBalance = bal);
 
         LedgerState ls = (activeLedger != null) ? activeLedger.exportState() : initialLedgerState;
 
         if (ls != null) {
-            ls.keys.forEach((id, key) -> exportMap.computeIfAbsent(id, k -> new CombinedUserData()).publicKey = key);
+            ls.keys.forEach((id, key) -> {
+                if (myIds.contains(id)) exportMap.computeIfAbsent(id, k -> new CombinedUserData()).publicKey = key;
+            });
+
             ls.hashes.forEach((id, hash) -> {
-                if (myIds.contains(id) || exportMap.containsKey(id)) {
+                if (myIds.contains(id)) {
                     CombinedUserData data = exportMap.computeIfAbsent(id, k -> new CombinedUserData());
                     data.lastHash = hash;
+
                     AccountState as = ls.states.get(id);
-                    if (as != null) {
-                        data.lastSeq = as.lastSeq;
-                        data.totalMinted = as.totalMinted;
-                        data.totalBurned = as.totalBurned;
-                    }
+                    if (as != null) data.lastSeq = as.lastSeq;
+
+                    int ledgerMint = (as != null) ? as.totalMinted : 0;
+                    int ledgerBurn = (as != null) ? as.totalBurned : 0;
+
+                    data.totalMinted = Math.max(ledgerMint, knownMinted.getOrDefault(id, 0));
+                    data.totalBurned = Math.max(ledgerBurn, knownBurned.getOrDefault(id, 0));
                 }
             });
         }
@@ -169,7 +218,11 @@ public class SettingsService {
                 if (data.name != null) accounts.add(new StoredAccount(id, data.name, data.pinHash != null ? data.pinHash : ""));
                 if (data.pendingActions != null) pendingActions.put(id, data.pendingActions);
                 if (data.lastReceivedTx != null) lastReceivedTx.put(id, new ConcurrentHashMap<>(data.lastReceivedTx));
+                if (data.lastSentTx != null) lastSentTx.put(id, new ConcurrentHashMap<>(data.lastSentTx));
                 if (data.savedBalance != null) savedBalances.put(id, data.savedBalance);
+
+                if (data.totalMinted > 0) knownMinted.put(id, data.totalMinted);
+                if (data.totalBurned > 0) knownBurned.put(id, data.totalBurned);
 
                 if (data.lastHash != null || data.publicKey != null) {
                     AccountState as = new AccountState();
@@ -191,10 +244,11 @@ public class SettingsService {
         String pinHash;
         List<String> pendingActions;
         Map<String, Integer> lastReceivedTx;
+        Map<String, Integer> lastSentTx;
         Integer savedBalance;
         String lastHash;
         String publicKey;
-        int lastSeq = -1;
+        int lastSeq = 0;
         int totalMinted = 0;
         int totalBurned = 0;
     }

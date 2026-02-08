@@ -7,6 +7,7 @@ public interface SmartCard {
     default boolean isConnected() { return false; }
     boolean isPinSet() throws Exception;
     boolean isGenesisDone() throws Exception;
+    int getPinRetries() throws Exception;
     boolean verifyPin(byte[] pin) throws Exception;
     boolean changePin(byte[] newPin) throws Exception;
     byte[] getPublicKey() throws Exception;

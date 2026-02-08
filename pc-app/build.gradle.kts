@@ -1,3 +1,6 @@
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.gradle.language.jvm.tasks.ProcessResources
+
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.jetbrains.compose)
@@ -10,8 +13,29 @@ java {
     }
 }
 
+sourceSets {
+    main {
+        val coreRoot = project(":client-core").projectDir
+
+        java.srcDirs("src/main/java", coreRoot.resolve("src/main/java"))
+        kotlin.srcDirs("src/main/kotlin", coreRoot.resolve("src/main/kotlin"))
+        resources.srcDirs("src/main/resources", coreRoot.resolve("src/main/res"))
+    }
+}
+
 dependencies {
-    implementation(project(":client-core"))
+    implementation(project(":common"))
+    implementation(libs.runtime)
+    implementation(libs.foundation)
+    implementation(libs.material3)
+    implementation(libs.material.icons.extended)
+    implementation(libs.ui)
+    implementation(libs.components.resources)
+    implementation(libs.lifecycle.viewmodel.compose)
+    implementation(libs.slf4j.simple)
+    implementation(libs.json)
+    implementation(libs.gson)
+
     implementation(compose.desktop.currentOs)
     implementation(libs.kotlinx.coroutines.swing)
 
@@ -23,15 +47,15 @@ dependencies {
 
 compose.desktop {
     application {
-        mainClass = "dole.desktop.MainKt"
+        mainClass = "dole.MainKt"
         nativeDistributions {
-            targetFormats(
-                org.jetbrains.compose.desktop.application.dsl.TargetFormat.Dmg,
-                org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi,
-                org.jetbrains.compose.desktop.application.dsl.TargetFormat.Deb
-            )
+            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "DittoWallet"
             packageVersion = "1.0.0"
         }
     }
+}
+
+tasks.withType<ProcessResources>().configureEach {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }

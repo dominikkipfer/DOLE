@@ -104,7 +104,8 @@ fun AuthScreen(
                             .sharedBounds(
                                 sharedContentState = rememberSharedContentState(key = "card-${account.id()}"),
                                 animatedVisibilityScope = animatedVisibilityScope,
-                                boundsTransform = { _, _ -> tween(500) }
+                                boundsTransform = { _, _ -> tween(500) },
+                                renderInOverlayDuringTransition = false
                             )
                     ) {
                         WalletCard(

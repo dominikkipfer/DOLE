@@ -22,10 +22,12 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -36,6 +38,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -46,11 +49,13 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.UnfoldMore
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -59,14 +64,15 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -79,13 +85,16 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -118,7 +127,7 @@ fun DashboardScreen(
     val backgroundColor = Color(0xFFF2F2F7)
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize().background(backgroundColor)) {
-        val isWideLayout = maxWidth > 600.dp || maxWidth > maxHeight
+        val isWideLayout = maxWidth > maxHeight
         val activeId = viewModel.currentId
         val accounts = viewModel.availableAccounts
 
@@ -136,6 +145,7 @@ fun DashboardScreen(
                 currentAccount = currentAccount,
                 sharedTransitionScope = sharedTransitionScope,
                 animatedVisibilityScope = animatedVisibilityScope,
+                screenHeight = screenHeight,
                 onSend = { showSendDialog = true },
                 onMint = { showMintDialog = true },
                 onBurn = { showBurnDialog = true }
@@ -154,17 +164,18 @@ fun DashboardScreen(
                 onBurn = { showBurnDialog = true }
             )
         }
-    }
 
-    DashboardDialogs(
-        viewModel = viewModel,
-        showSend = showSendDialog,
-        showMint = showMintDialog,
-        showBurn = showBurnDialog,
-        onDismissSend = { showSendDialog = false },
-        onDismissMint = { showMintDialog = false },
-        onDismissBurn = { showBurnDialog = false }
-    )
+        DashboardDialogs(
+            viewModel = viewModel,
+            showSend = showSendDialog,
+            showMint = showMintDialog,
+            showBurn = showBurnDialog,
+            screenHeight = screenHeight,
+            onDismissSend = { showSendDialog = false },
+            onDismissMint = { showMintDialog = false },
+            onDismissBurn = { showBurnDialog = false }
+        )
+    }
 }
 
 @OptIn(ExperimentalSharedTransitionApi::class)
@@ -174,14 +185,14 @@ private fun WideDashboardLayout(
     currentAccount: StoredAccount?,
     sharedTransitionScope: SharedTransitionScope,
     animatedVisibilityScope: AnimatedVisibilityScope,
+    screenHeight: Dp,
     onSend: () -> Unit,
     onMint: () -> Unit,
     onBurn: () -> Unit
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val leftColumnWidth = maxWidth * 0.45f
-        val availableWidth = leftColumnWidth - 64.dp
-        val slotWidth = availableWidth / 5
+        val slotWidth = (leftColumnWidth - 64.dp) / 5
         val buttonSize = minOf(60.dp, slotWidth * 0.85f)
 
         Row(modifier = Modifier.fillMaxSize()) {
@@ -200,7 +211,13 @@ private fun WideDashboardLayout(
                     Spacer(Modifier.height(32.dp))
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("Card Balance", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
-                        Text("DM ${viewModel.balance}", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = Color.Black)
+
+                        Text(
+                            "DM ${viewModel.balance}",
+                            style = MaterialTheme.typography.headlineLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Black.copy(alpha = if (viewModel.isBalancePending) 0.5f else 1.0f)
+                        )
                     }
                     Spacer(Modifier.height(32.dp))
 
@@ -228,7 +245,7 @@ private fun WideDashboardLayout(
                     listState = rememberLazyListState(),
                     topPadding = null,
                     minHeaderHeight = 0.dp,
-                    screenHeight = 0.dp,
+                    screenHeight = screenHeight,
                     isWideLayout = true
                 )
             }
@@ -255,25 +272,21 @@ private fun PortraitDashboardLayout(
 
     val cardHeightExpanded = maxWidth / 1.586f
     val horizontalPadding = 24.dp
-
-    val availableWidth = maxWidth - (horizontalPadding * 2)
-    val slotWidth = availableWidth / 5
+    val slotWidth = (maxWidth - (horizontalPadding * 2)) / 5
     val buttonSize = minOf(60.dp, slotWidth * 0.8f)
-    val buttonsHeight = buttonSize + 25.dp
 
     val cardTopPad = 12.dp
     val balanceTopPad = 32.dp
     val buttonsTopPad = 72.dp
     val extraBottomPad = 12.dp
 
-    val expandedHeaderHeight = cardTopPad + cardHeightExpanded + balanceTopPad + buttonsTopPad + buttonsHeight + extraBottomPad
-
+    val expandedHeaderHeight = cardTopPad + cardHeightExpanded + balanceTopPad + buttonsTopPad + buttonSize + 25.dp + extraBottomPad
     val minHeaderHeight = 150.dp
     val scrollLimitHeaderHeight = 104.dp
     val effectiveMaxHeaderHeight = maxOf(expandedHeaderHeight, minHeaderHeight)
 
-    val maxHeaderPx = with(density) { effectiveMaxHeaderHeight.toPx() }
-    val minScrollHeaderPx = with(density) { scrollLimitHeaderHeight.toPx() }
+    val maxHeaderPx = density.run { effectiveMaxHeaderHeight.toPx() }
+    val minScrollHeaderPx = density.run { scrollLimitHeaderHeight.toPx() }
     val scrollRange = maxHeaderPx - minScrollHeaderPx
 
     val isDragged by listState.interactionSource.collectIsDraggedAsState()
@@ -355,7 +368,16 @@ private fun PortraitDashboardLayout(
                 modifier = Modifier.align(BiasAlignment(alignmentBias, 0f))
             ) {
                 Text("Card Balance", modifier = Modifier.offset(x = 2.dp), style = MaterialTheme.typography.labelMedium.copy(fontSize = currentLabelSize, lineHeight = currentLabelSize), color = Color.Gray)
-                Text("DM ${viewModel.balance}", style = MaterialTheme.typography.headlineMedium.copy(fontSize = currentFontSize, fontWeight = FontWeight.Bold, lineHeight = currentFontSize), color = Color.Black)
+
+                Text(
+                    "DM ${viewModel.balance}",
+                    style = MaterialTheme.typography.headlineMedium.copy(
+                        fontSize = currentFontSize,
+                        fontWeight = FontWeight.Bold,
+                        lineHeight = currentFontSize
+                    ),
+                    color = Color.Black.copy(alpha = if (viewModel.isBalancePending) 0.5f else 1.0f)
+                )
             }
         }
 
@@ -392,8 +414,8 @@ private fun PortraitDashboardLayout(
         val logoutSlotCenter = horizontalPadding + (slotWidth * 4) + (slotWidth / 2)
         val logoutStartX = logoutSlotCenter - (buttonSize / 2) + 16.dp
         val logoutEndX = maxWidth - 56.dp
-
         val animationProgress = collapseFactor
+
         val currentLogoutX = interpolateDp(logoutStartX, logoutEndX, animationProgress)
         val currentLogoutY = interpolateDp(buttonsY, 28.dp, animationProgress)
         val currentLogoutSize = interpolateDp(buttonSize, 40.dp, animationProgress)
@@ -529,7 +551,7 @@ fun TransactionDashboardList(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(text = if (isSearchMode) "Search History" else "Latest Transactions", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                IconButton(onClick = { viewModel.isSearchMode = !viewModel.isSearchMode }) {
+                IconButton(onClick = { viewModel.toggleSearchMode() }) {
                     Icon(imageVector = if (isSearchMode) Icons.Default.Close else Icons.Default.Search, contentDescription = "Toggle Search", tint = Color(0xFF007AFF))
                 }
             }
@@ -537,8 +559,17 @@ fun TransactionDashboardList(
 
         if (isSearchMode) {
             item {
-                val bgColor = if(isWideLayout) Color.White else Color.Transparent
-                Box(Modifier.padding(horizontal = 16.dp)) { FilterSection(viewModel, bgColor) }
+                val cardColor = if (isWideLayout) Color.White else Color.Transparent
+                val inputColor = if (isWideLayout) Color(0xFFF2F2F7) else Color.White
+
+                Box(Modifier.padding(horizontal = 16.dp)) {
+                    FilterSection(
+                        viewModel = viewModel,
+                        screenHeight = screenHeight,
+                        backgroundColor = cardColor,
+                        inputBackgroundColor = inputColor
+                    )
+                }
             }
             item {
                 SortHeaderRow(
@@ -551,7 +582,11 @@ fun TransactionDashboardList(
             if (searchList.isEmpty()) {
                 item { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { Text("No results found.", color = Color.Gray) } }
             } else {
-                items(searchList, key = { "search-${it.tx.id()}" }) { item -> Box(Modifier.padding(horizontal = 16.dp)) { TransactionRow(item, myId, isPending = false) } }
+                items(searchList, key = { "search-${it.tx.id()}" }) { item ->
+                    Box(Modifier.padding(horizontal = 16.dp)) {
+                        TransactionRow(item, myId, isPending = item.isUnsynced)
+                    }
+                }
             }
         } else {
             if (hasPending) {
@@ -599,7 +634,8 @@ private fun SharedWalletCard(
                 modifier = Modifier.fillMaxWidth().sharedBounds(
                     sharedContentState = rememberSharedContentState(key = "card-${account.id()}"),
                     animatedVisibilityScope = animatedVisibilityScope,
-                    boundsTransform = { _, _ -> tween(500) }
+                    boundsTransform = { _, _ -> tween(500) },
+                    renderInOverlayDuringTransition = false
                 )
             )
         }
@@ -612,6 +648,7 @@ private fun DashboardDialogs(
     showSend: Boolean,
     showMint: Boolean,
     showBurn: Boolean,
+    screenHeight: Dp,
     onDismissSend: () -> Unit,
     onDismissMint: () -> Unit,
     onDismissBurn: () -> Unit
@@ -622,6 +659,7 @@ private fun DashboardDialogs(
         SendOverlay(
             peers = viewModel.knownNetworkPeers,
             currentBalance = currentBalance,
+            screenHeight = screenHeight,
             onDismiss = onDismissSend,
             onConfirm = { targetId, amount -> viewModel.send(targetId, amount); onDismissSend() }
         )
@@ -645,7 +683,314 @@ private fun DashboardDialogs(
 }
 
 @Composable
-fun FilterSection(viewModel: WalletViewModel, backgroundColor: Color = Color.White) {
+fun CleanAmountInput(
+    value: String,
+    onValueChange: (String) -> Unit,
+    isError: Boolean,
+    maxInputLimit: Long = Int.MAX_VALUE.toLong()
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        val fontSize = 56.sp
+        val commonTextStyle = MaterialTheme.typography.displayMedium.copy(
+            fontWeight = FontWeight.Bold,
+            fontSize = fontSize,
+            lineHeight = fontSize
+        )
+
+        Text(
+            text = "DM",
+            style = commonTextStyle.copy(fontSize = 32.sp, lineHeight = 32.sp),
+            color = if (value.isEmpty()) Color.LightGray else Color.Black,
+            modifier = Modifier.padding(end = 8.dp).offset(y = 4.dp)
+        )
+
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.width(IntrinsicSize.Min)) {
+            val textStyle = commonTextStyle.copy(
+                color = if (isError) MaterialTheme.colorScheme.error else Color.Black,
+                textAlign = TextAlign.Start
+            )
+
+            BasicTextField(
+                value = value,
+                onValueChange = { input ->
+                    val numericInput = input.filter { it.isDigit() }
+                    val cleanInput = if (numericInput.startsWith("0") && numericInput.length > 1) {
+                        numericInput.dropWhile { it == '0' }
+                    } else numericInput
+
+                    if (cleanInput.isEmpty()) {
+                        onValueChange("")
+                    } else {
+                        val num = cleanInput.toLongOrNull()
+                        if (num != null && num <= maxInputLimit) {
+                            onValueChange(cleanInput)
+                        }
+                    }
+                },
+                textStyle = textStyle,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                cursorBrush = SolidColor(Color.Black),
+                singleLine = true,
+                modifier = Modifier
+                    .width(IntrinsicSize.Min)
+                    .defaultMinSize(minWidth = 40.dp),
+                decorationBox = { innerTextField ->
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    ) {
+                        Text(
+                            text = "0",
+                            style = textStyle,
+                            color = Color.Transparent
+                        )
+                        if (value.isEmpty()) {
+                            Text(
+                                text = "0",
+                                style = textStyle,
+                                color = Color.LightGray
+                            )
+                        }
+                        innerTextField()
+                    }
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun UnifiedPeerInput(
+    value: String,
+    onValueChange: (String) -> Unit,
+    peers: List<PeerOption>,
+    placeholder: String,
+    screenHeight: Dp,
+    containerColor: Color = Color(0xFFF2F2F7),
+    onPeerSelected: (String) -> Unit
+) {
+    var isDropdownExpanded by remember { mutableStateOf(false) }
+    var textFieldSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
+
+    val density = LocalDensity.current
+    var inputBottomY by remember { mutableFloatStateOf(0f) }
+
+    val filteredPeers = peers.filter { it.label.contains(value, ignoreCase = true) || it.id.contains(value) }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        TextField(
+            value = value,
+            onValueChange = {
+                onValueChange(it)
+                isDropdownExpanded = true
+            },
+            placeholder = { Text(placeholder) },
+            leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, tint = Color.Gray) },
+            trailingIcon = {
+                Row {
+                    if (value.isNotEmpty()) {
+                        IconButton(onClick = { onValueChange(""); isDropdownExpanded = false }) {
+                            Icon(Icons.Default.Close, "Clear", tint = Color.Gray)
+                        }
+                    }
+                    IconButton(onClick = { isDropdownExpanded = !isDropdownExpanded }) {
+                        Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = "Dropdown", tint = Color.Gray)
+                    }
+                }
+            },
+            colors = TextFieldDefaults.colors(
+                focusedContainerColor = containerColor,
+                unfocusedContainerColor = containerColor,
+                disabledContainerColor = containerColor,
+                focusedIndicatorColor = Color.Transparent,
+                unfocusedIndicatorColor = Color.Transparent
+            ),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .onGloballyPositioned { coordinates ->
+                    textFieldSize = coordinates.size.toSize()
+                    inputBottomY = coordinates.positionInRoot().y + coordinates.size.height
+                },
+            singleLine = true
+        )
+
+        if (isDropdownExpanded && (filteredPeers.isNotEmpty() || value.isNotEmpty())) {
+            val screenHeightPx = with(density) { screenHeight.toPx() }
+            val spaceBelowPx = screenHeightPx - inputBottomY
+            val spaceBelowDp = density.run { spaceBelowPx.toDp() }
+
+            val maxMenuHeight = (spaceBelowDp - 48.dp).coerceAtLeast(0.dp).coerceAtMost(200.dp)
+
+            DropdownMenu(
+                expanded = true,
+                onDismissRequest = { isDropdownExpanded = false },
+                modifier = Modifier
+                    .width(with(LocalDensity.current) { textFieldSize.width.toDp() })
+                    .heightIn(max = maxMenuHeight)
+                    .background(Color.White),
+                properties = PopupProperties(focusable = false)
+            ) {
+                filteredPeers.forEach { peer ->
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                val displayName = if (peer.label.startsWith("User", ignoreCase = true)) peer.id else peer.label
+                                FrontEllipsizedText(text = displayName, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), modifier = Modifier.fillMaxWidth())
+                            }
+                        },
+                        onClick = {
+                            onPeerSelected(if (peer.label.startsWith("User", ignoreCase = true)) peer.id else peer.label)
+                            isDropdownExpanded = false
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ModernActionSheet(
+    title: String,
+    onDismissRequest: () -> Unit,
+    confirmText: String,
+    onConfirm: () -> Unit,
+    isConfirmEnabled: Boolean,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    SafeOverlay(onDismissRequest = onDismissRequest) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp)
+        ) {
+            Box(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 32.sp),
+                    fontWeight = FontWeight.Bold,
+                    color = Color.Black,
+                    modifier = Modifier.align(Alignment.CenterStart)
+                )
+                IconButton(
+                    onClick = onDismissRequest,
+                    modifier = Modifier.align(Alignment.CenterEnd).size(32.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = Color.Black)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Column(
+                modifier = Modifier.weight(1f, fill = false),
+                verticalArrangement = Arrangement.Center
+            ) {
+                content()
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Button(
+                onClick = onConfirm,
+                enabled = isConfirmEnabled,
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Black, contentColor = Color.White, disabledContainerColor = Color.LightGray),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth().height(56.dp)
+            ) {
+                Text(text = confirmText, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+fun SendOverlay(peers: List<PeerOption>, currentBalance: Int, screenHeight: Dp, onDismiss: () -> Unit, onConfirm: (String, Int) -> Unit) {
+    var amountText by remember { mutableStateOf("") }
+    var receiverInput by remember { mutableStateOf("") }
+
+    val amountInt = amountText.toIntOrNull()
+
+    val resolvedTargetId = remember(receiverInput, peers) {
+        val match = peers.find { it.label.equals(receiverInput, ignoreCase = true) || it.id == receiverInput }
+        match?.id ?: if (receiverInput.length > 5) receiverInput else null
+    }
+
+    val isAmountValid = amountInt != null && amountInt > 0 && amountInt <= currentBalance
+    val isReceiverValid = resolvedTargetId != null
+
+    ModernActionSheet(
+        title = "Send",
+        onDismissRequest = onDismiss,
+        confirmText = "Send",
+        onConfirm = {
+            if (resolvedTargetId != null && amountInt != null) {
+                onConfirm(resolvedTargetId, amountInt)
+            }
+        },
+        isConfirmEnabled = isAmountValid && isReceiverValid
+    ) {
+        CleanAmountInput(
+            value = amountText,
+            onValueChange = { amountText = it },
+            isError = amountInt != null && amountInt > currentBalance
+        )
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        UnifiedPeerInput(
+            value = receiverInput,
+            onValueChange = { receiverInput = it },
+            peers = peers,
+            placeholder = "Receiver (Name or ID)",
+            screenHeight = screenHeight,
+            onPeerSelected = { receiverInput = it }
+        )
+    }
+}
+
+@Composable
+fun MintBurnOverlay(title: String, maxBalance: Int? = null, onDismiss: () -> Unit, onConfirm: (Int) -> Unit) {
+    var amountText by remember { mutableStateOf("") }
+    val amountInt = amountText.toIntOrNull()
+
+    val isValid = if (maxBalance == null) {
+        (amountInt != null && amountInt > 0)
+    } else {
+        (amountInt != null && amountInt > 0 && amountInt <= maxBalance)
+    }
+
+    val actionText = if (title == "Mint") "Mint" else "Burn"
+
+    val limit = if (title == "Mint") {
+        Int.MAX_VALUE.toLong()
+    } else {
+        maxBalance?.toLong() ?: Int.MAX_VALUE.toLong()
+    }
+
+    ModernActionSheet(
+        title = title,
+        onDismissRequest = onDismiss,
+        confirmText = actionText,
+        onConfirm = { amountInt?.let(onConfirm) },
+        isConfirmEnabled = isValid
+    ) {
+        CleanAmountInput(
+            value = amountText,
+            onValueChange = { amountText = it },
+            isError = maxBalance != null && amountInt != null && amountInt > maxBalance,
+            maxInputLimit = limit
+        )
+    }
+}
+
+@Composable
+fun FilterSection(viewModel: WalletViewModel, screenHeight: Dp, backgroundColor: Color = Color.White, inputBackgroundColor: Color) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = backgroundColor),
@@ -665,7 +1010,9 @@ fun FilterSection(viewModel: WalletViewModel, backgroundColor: Color = Color.Whi
 
             val showPeerFilter = !(selection.isNotEmpty() && !hasSend && !hasReceive && (hasMint || hasBurn))
 
-            Box(Modifier.width(IntrinsicSize.Min)) { TypeFilterDropdown(viewModel) }
+            Box(Modifier.width(IntrinsicSize.Min)) {
+                TypeFilterDropdown(viewModel, containerColor = inputBackgroundColor)
+            }
 
             if (showPeerFilter) {
                 val label = when {
@@ -673,7 +1020,42 @@ fun FilterSection(viewModel: WalletViewModel, backgroundColor: Color = Color.Whi
                     !hasSend && hasReceive -> "Sender"
                     else -> "Sender / Receiver"
                 }
-                Box(Modifier.weight(1f)) { PeerFilterDropdown(viewModel, viewModel.knownNetworkPeers, label) }
+
+                val relevantIds = remember(viewModel.filteredHistory, viewModel.filterTypes, viewModel.currentId) {
+                    val types = viewModel.filterTypes
+                    val onlySend = types.contains(TxFilterType.SEND) && !types.contains(TxFilterType.RECEIVE)
+                    val onlyReceive = types.contains(TxFilterType.RECEIVE) && !types.contains(TxFilterType.SEND)
+
+                    viewModel.filteredHistory.mapNotNull { item ->
+                        val tx = item.tx
+                        val myId = viewModel.currentId
+                        val isMe = tx.author() == myId
+
+                        if (onlySend) {
+                            if (isMe && tx is SendTransaction) tx.target else null
+                        } else if (onlyReceive) {
+                            if (!isMe && tx is SendTransaction) tx.author() else null
+                        } else {
+                            if (isMe && tx is SendTransaction) tx.target
+                            else if (!isMe) tx.author()
+                            else null
+                        }
+                    }.toSet()
+                }
+
+                val relevantPeers = viewModel.knownNetworkPeers.filter { relevantIds.contains(it.id) }
+
+                Box(Modifier.weight(1f)) {
+                    UnifiedPeerInput(
+                        value = viewModel.filterPeerQuery,
+                        onValueChange = { viewModel.filterPeerQuery = it },
+                        peers = relevantPeers,
+                        placeholder = label,
+                        screenHeight = screenHeight,
+                        containerColor = inputBackgroundColor,
+                        onPeerSelected = { viewModel.filterPeerQuery = it }
+                    )
+                }
             }
         }
     }
@@ -725,7 +1107,7 @@ fun SortIndicator(label: String, isActive: Boolean, isAscending: Boolean, onClic
 }
 
 @Composable
-fun TypeFilterDropdown(viewModel: WalletViewModel) {
+fun TypeFilterDropdown(viewModel: WalletViewModel, containerColor: Color = Color(0xFFF2F2F7)) {
     var isExpanded by remember { mutableStateOf(false) }
     val selectedTypes = viewModel.filterTypes
     val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
@@ -740,13 +1122,13 @@ fun TypeFilterDropdown(viewModel: WalletViewModel) {
     }
 
     Box(modifier = Modifier.width(120.dp)) {
-        OutlinedTextField(
+        TextField(
             value = " ",
             onValueChange = {},
             readOnly = true,
-            label = { Text("Type", style = MaterialTheme.typography.bodySmall) },
-            prefix = {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            placeholder = { Text("Type") },
+            leadingIcon = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(start = 8.dp)) {
                     if (selectedTypes.isEmpty()) {
                         Icon(Icons.Default.FilterList, "All", tint = Color.Gray, modifier = Modifier.size(20.dp))
                     } else {
@@ -764,11 +1146,14 @@ fun TypeFilterDropdown(viewModel: WalletViewModel) {
                     }
                 }
             },
-            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = Color.Transparent,
-                unfocusedContainerColor = Color.Transparent,
-                disabledContainerColor = Color.Transparent,
+            colors = TextFieldDefaults.colors(
+                focusedContainerColor = containerColor,
+                unfocusedContainerColor = containerColor,
+                disabledContainerColor = containerColor,
+                focusedIndicatorColor = Color.Transparent,
+                unfocusedIndicatorColor = Color.Transparent
             ),
+            shape = RoundedCornerShape(12.dp),
             textStyle = androidx.compose.ui.text.TextStyle(color = Color.Transparent),
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
@@ -811,207 +1196,6 @@ fun TypeFilterDropdown(viewModel: WalletViewModel) {
                     onClick = { viewModel.toggleFilterType(type) }
                 )
             }
-
-            if (viewModel.filterTypes.isNotEmpty()) {
-                DropdownMenuItem(
-                    text = { Text("Reset", color = Color.Red) },
-                    onClick = { viewModel.filterTypes.clear(); isExpanded = false }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun PeerFilterDropdown(viewModel: WalletViewModel, peers: List<PeerOption>, labelText: String) {
-    var isExpanded by remember { mutableStateOf(false) }
-    var textFieldSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
-    val filteredPeers = peers.filter { it.label.contains(viewModel.filterPeerQuery, ignoreCase = true) || it.id.contains(viewModel.filterPeerQuery) }
-
-    Box(modifier = Modifier.fillMaxWidth()) {
-        OutlinedTextField(
-            value = viewModel.filterPeerQuery,
-            onValueChange = { viewModel.filterPeerQuery = it; isExpanded = true },
-            label = { Text(labelText, style = MaterialTheme.typography.bodySmall) },
-            trailingIcon = { Icon(Icons.Default.ArrowDropDown, "Select", Modifier.clickable { isExpanded = !isExpanded }) },
-            modifier = Modifier.fillMaxWidth().onGloballyPositioned { textFieldSize = it.size.toSize() },
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodyMedium
-        )
-        DropdownMenu(
-            expanded = isExpanded,
-            onDismissRequest = { isExpanded = false },
-            modifier = Modifier.width(with(LocalDensity.current) { textFieldSize.width.toDp() }).background(Color.White),
-            properties = PopupProperties(focusable = false)
-        ) {
-            filteredPeers.take(5).forEach { peer ->
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            Text(peer.label, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
-                            if (!peer.label.startsWith("User ...")) {
-                                Text(peer.id.take(8) + "...", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                            }
-                        }
-                    },
-                    onClick = { viewModel.filterPeerQuery = peer.label; isExpanded = false }
-                )
-            }
-            if (viewModel.filterPeerQuery.isNotEmpty()) {
-                DropdownMenuItem(text = { Text("Reset", color = Color.Red) }, onClick = { viewModel.filterPeerQuery = ""; isExpanded = false })
-            }
-        }
-    }
-}
-
-@Composable
-fun SendOverlay(peers: List<PeerOption>, currentBalance: Int, onDismiss: () -> Unit, onConfirm: (String, Int) -> Unit) {
-    var amountText by remember { mutableStateOf("") }
-    var receiverInput by remember { mutableStateOf("") }
-    var isDropdownExpanded by remember { mutableStateOf(false) }
-    var textFieldSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
-
-    val amountInt = amountText.toIntOrNull()
-
-    val resolvedTargetId = remember(receiverInput, peers) {
-        val match = peers.find { it.label.equals(receiverInput, ignoreCase = true) || it.id == receiverInput }
-        match?.id ?: if (receiverInput.length > 5) receiverInput else null
-    }
-
-    val isAmountValid = amountInt != null && amountInt > 0 && amountInt <= currentBalance
-    val isReceiverValid = resolvedTargetId != null
-
-    val filteredPeers = peers.filter { it.label.contains(receiverInput, ignoreCase = true) || it.id.contains(receiverInput) }
-
-    DashboardActionDialog(onDismissRequest = onDismiss) {
-        Text(text = "Send Money", style = MaterialTheme.typography.headlineSmall)
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Box(modifier = Modifier.fillMaxWidth()) {
-            OutlinedTextField(
-                value = receiverInput,
-                onValueChange = { receiverInput = it; isDropdownExpanded = true },
-                label = { Text("Receiver (Name or ID)") },
-                trailingIcon = { Icon(Icons.Default.ArrowDropDown, "History", Modifier.clickable { isDropdownExpanded = !isDropdownExpanded }) },
-                modifier = Modifier.fillMaxWidth().onGloballyPositioned { textFieldSize = it.size.toSize() },
-                singleLine = true
-            )
-            if (isDropdownExpanded && (filteredPeers.isNotEmpty() || receiverInput.isNotEmpty())) {
-                DropdownMenu(
-                    expanded = true, onDismissRequest = { isDropdownExpanded = false },
-                    modifier = Modifier.width(with(LocalDensity.current) { textFieldSize.width.toDp() }).background(Color.White),
-                    properties = PopupProperties(focusable = false)
-                ) {
-                    filteredPeers.forEach { peer ->
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text(peer.label, fontWeight = FontWeight.Bold)
-                                    if (!peer.label.startsWith("User ...")) {
-                                        FrontEllipsizedText(text = peer.id, style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.fillMaxWidth())
-                                    }
-                                }
-                            },
-                            onClick = { receiverInput = peer.label; isDropdownExpanded = false }
-                        )
-                    }
-                    if (receiverInput.isNotEmpty()) {
-                        DropdownMenuItem(text = { Text("Reset", color = Color.Red) }, onClick = { receiverInput = ""; isDropdownExpanded = false })
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        OutlinedTextField(
-            value = amountText,
-            onValueChange = { input ->
-                if (input.all { it.isDigit() }) amountText = input
-            },
-            label = { Text("Amount") },
-            isError = amountInt != null && amountInt > currentBalance,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        if (amountInt != null && amountInt > currentBalance) {
-            Text(
-                text = "Insufficient funds (Balance: $currentBalance)",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(start = 16.dp, top = 2.dp)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-            Spacer(Modifier.width(8.dp))
-            Button(
-                onClick = {
-                    if (resolvedTargetId != null && amountInt != null) {
-                        onConfirm(resolvedTargetId, amountInt)
-                    }
-                },
-                enabled = isAmountValid && isReceiverValid
-            ) { Text("Send") }
-        }
-    }
-}
-
-@Composable
-fun DashboardActionDialog(onDismissRequest: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-    SafeOverlay(onDismissRequest = onDismissRequest) {
-        Column(modifier = Modifier.padding(24.dp)) {
-            content()
-        }
-    }
-}
-
-@Composable
-fun MintBurnOverlay(title: String, maxBalance: Int? = null, onDismiss: () -> Unit, onConfirm: (Int) -> Unit) {
-    var text by remember { mutableStateOf("") }
-    val amountInt = text.toIntOrNull()
-
-    val isValid = if (maxBalance == null) {
-        (amountInt != null && amountInt > 0)
-    } else {
-        (amountInt != null && amountInt > 0 && amountInt <= maxBalance)
-    }
-
-    DashboardActionDialog(onDismissRequest = onDismiss) {
-        Text(text = title, style = MaterialTheme.typography.headlineSmall)
-        Spacer(modifier = Modifier.height(16.dp))
-
-        OutlinedTextField(
-            value = text,
-            onValueChange = { input ->
-                if (input.all { it.isDigit() }) text = input
-            },
-            label = { Text("Amount") },
-            isError = maxBalance != null && amountInt != null && amountInt > maxBalance,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        if (maxBalance != null && amountInt != null && amountInt > maxBalance) {
-            Text(
-                text = "Insufficient funds (Balance: $maxBalance)",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(start = 16.dp, top = 2.dp)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-            Spacer(Modifier.width(8.dp))
-            Button(onClick = { amountInt?.let(onConfirm) }, enabled = isValid) { Text("OK") }
         }
     }
 }
@@ -1130,7 +1314,6 @@ fun TransactionRow(item: DisplayTransaction, myId: String, isPending: Boolean) {
     if (isGenesis) return
 
     Card(
-        modifier = Modifier.alpha(if (isPending) 0.8f else 1f),
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(12.dp),
         elevation = CardDefaults.cardElevation(1.dp)

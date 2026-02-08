@@ -149,7 +149,7 @@ public class Card extends Applet {
         deviceCertificate = new byte[512];
         peerData = new byte[Constants.CARD_MAX_PEERS * Constants.CARD_PEER_ROW_SIZE];
 
-        ramBuffer = JCSystem.makeTransientByteArray((short) Constants.CARD_RAM_BUFFER_SIZE, JCSystem.CLEAR_ON_DESELECT);
+        ramBuffer = JCSystem.makeTransientByteArray(Constants.CARD_RAM_BUFFER_SIZE, JCSystem.CLEAR_ON_DESELECT);
         mathA = JCSystem.makeTransientByteArray(Constants.GOC_SIZE, JCSystem.CLEAR_ON_DESELECT);
         mathB = JCSystem.makeTransientByteArray(Constants.GOC_SIZE, JCSystem.CLEAR_ON_DESELECT);
         mathRes = JCSystem.makeTransientByteArray(Constants.GOC_SIZE, JCSystem.CLEAR_ON_DESELECT);
@@ -284,7 +284,8 @@ public class Card extends Applet {
         byte[] buffer = apdu.getBuffer();
         buffer[0] = isPinSet ? (byte) 0x01 : (byte) 0x00;
         buffer[1] = genesisDone ? (byte) 0x01 : (byte) 0x00;
-        apdu.setOutgoingAndSend((short)0, (short)2);
+        buffer[2] = ownerPin.getTriesRemaining();
+        apdu.setOutgoingAndSend((short)0, (short)3);
     }
 
     /**
@@ -574,14 +575,16 @@ public class Card extends Applet {
         off = Util.arrayCopyNonAtomic(myId, (short)0, ramBuffer, off, Constants.ID_SIZE);
 
         if (targetIdSource != null) {
-            Util.arrayCopyNonAtomic(targetIdSource, targetIdOff, ramBuffer, off, Constants.ID_SIZE);
+            off = Util.arrayCopyNonAtomic(targetIdSource, targetIdOff, ramBuffer, off, Constants.ID_SIZE);
         } else {
-            Util.arrayFillNonAtomic(ramBuffer, off, Constants.ID_SIZE, (byte)0);
+            off = Util.arrayFillNonAtomic(ramBuffer, off, Constants.ID_SIZE, (byte)0);
         }
 
-        off += Constants.ID_SIZE;
-        if (valSource != null) Util.arrayCopyNonAtomic(valSource, (short)0, ramBuffer, off, Constants.GOC_SIZE);
-        else Util.arrayFillNonAtomic(ramBuffer, off, Constants.GOC_SIZE, (byte)0);
+        if (valSource != null) {
+            Util.arrayCopyNonAtomic(valSource, (short) 0, ramBuffer, off, Constants.GOC_SIZE);
+        } else {
+            Util.arrayFillNonAtomic(ramBuffer, off, Constants.GOC_SIZE, (byte) 0);
+        }
 
         hasher.doFinal(ramBuffer, (short)0, Constants.LOG_PAYLOAD_SIZE, lastSignedHash, (short)0);
         MathLib.increment(seqNumber);

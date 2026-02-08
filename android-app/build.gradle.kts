@@ -1,3 +1,6 @@
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -14,8 +17,17 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    sourceSets {
+        getByName("main") {
+            val coreRoot = project(":client-core").projectDir
+
+            java.srcDirs(coreRoot.resolve("src/main/java"))
+            java.srcDirs(coreRoot.resolve("src/main/kotlin"))
+            res.srcDirs(coreRoot.resolve("src/main/res"))
+        }
     }
 
     buildTypes {
@@ -38,25 +50,23 @@ android {
     }
 
     packaging {
-        resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        }
-        jniLibs {
-            useLegacyPackaging = true
-            excludes += "META-INF/*"
-            pickFirsts += "**/libdittoffi.so"
-        }
+        resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        jniLibs.useLegacyPackaging = true
+        jniLibs.pickFirsts += "**/libdittoffi.so"
     }
 }
 
-kotlin {
+tasks.withType<KotlinCompile>().configureEach {
     compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
+        jvmTarget.set(JvmTarget.JVM_21)
     }
 }
 
 dependencies {
-    implementation(project(":client-core"))
+    implementation(project(":common"))
+    implementation(libs.json)
+    implementation(libs.gson)
+    implementation(libs.slf4j.simple)
 
     implementation(libs.ditto.android)
 
@@ -69,6 +79,7 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     implementation(libs.google.material)
+    implementation(libs.material.icons.extended)
 
     testImplementation(libs.junit4)
     androidTestImplementation(libs.androidx.junit)

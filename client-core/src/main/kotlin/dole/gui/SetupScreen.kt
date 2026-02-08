@@ -43,6 +43,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
@@ -61,12 +66,16 @@ fun SetupScreen(
     isLoading: Boolean,
     isSuccess: Boolean,
     isCardConnected: Boolean,
+    isError: Boolean = false,
+    onErrorShown: () -> Unit = {},
     onRegister: (String, String) -> Unit,
     onCancel: () -> Unit,
     onComplete: () -> Unit,
     sharedTransitionScope: SharedTransitionScope,
     animatedVisibilityScope: AnimatedVisibilityScope
 ) {
+    val containerKey = "setup-container-$cardId"
+    val cardKey = "card-$cardId"
     var cachedCardId by remember { mutableStateOf(cardId) }
     LaunchedEffect(cardId) { if (cardId != "NULL" && cardId.isNotBlank()) cachedCardId = cardId }
 
@@ -76,9 +85,28 @@ fun SetupScreen(
     var step by remember { mutableIntStateOf(1) }
 
     val scope = rememberCoroutineScope()
-    var isError by remember { mutableStateOf(false) }
+    var isLocalError by remember { mutableStateOf(false) }
     val shakeOffset = remember { Animatable(0f) }
     val mainFocusRequester = remember { FocusRequester() }
+
+    var isRecoveringFromError by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isError) {
+        if (isError) {
+            isRecoveringFromError = true
+            shakeOffset.triggerShakeAnimation()
+            delay(300)
+
+            pinInput = ""
+            if (!cardHasPin && step == 3) {
+                firstPin = null
+                step = 2
+            }
+
+            onErrorShown()
+            isRecoveringFromError = false
+        }
+    }
 
     val previewAccount = remember(name, cachedCardId) {
         StoredAccount(cachedCardId, name.ifEmpty { "YOUR NAME" }, "")
@@ -86,14 +114,17 @@ fun SetupScreen(
 
     fun goBack() {
         if (isSuccess) onCancel()
-        else if (step > 1) { step -= 1; pinInput = ""; firstPin = null }
-        else onCancel()
+        else if (step > 1) {
+            step -= 1
+            pinInput = ""
+            firstPin = null
+        } else onCancel()
     }
 
     val handleNameSubmit = { step = 2 }
 
     fun handlePinInput(digit: String) {
-        if (isError || isSuccess || isLoading) return
+        if (isLocalError || isError || isRecoveringFromError || isSuccess || isLoading) return
 
         if (pinInput.length < 4) {
             pinInput += digit
@@ -102,19 +133,21 @@ fun SetupScreen(
                     onRegister(pinInput, name)
                 } else {
                     if (step == 2) {
-                        firstPin = pinInput; pinInput = ""; step = 3
+                        firstPin = pinInput
+                        pinInput = ""
+                        step = 3
                     } else if (step == 3) {
                         if (pinInput == firstPin) {
                             onRegister(pinInput, name)
                         } else {
                             scope.launch {
-                                isError = true
+                                isLocalError = true
                                 shakeOffset.triggerShakeAnimation()
                                 delay(600)
                                 firstPin = null
                                 pinInput = ""
                                 step = 2
-                                isError = false
+                                isLocalError = false
                             }
                         }
                     }
@@ -124,32 +157,58 @@ fun SetupScreen(
     }
 
     fun removeDigit() {
-        if (pinInput.isNotEmpty() && !isError) pinInput = pinInput.dropLast(1)
+        if (pinInput.isNotEmpty() && !isLocalError && !isError && !isRecoveringFromError) pinInput = pinInput.dropLast(1)
     }
 
     LaunchedEffect(step) { if (step >= 2) mainFocusRequester.requestFocus() }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .pinInputHandler(
-                focusRequester = mainFocusRequester,
-                enabled = step >= 2 && !isLoading,
-                onDigit = { handlePinInput(it) },
-                onDelete = { removeDigit() },
-                onEscape = { if (!isLoading) goBack() }
-            )
-    ) {
-        AnimatedContent(
-            targetState = if (isSuccess) 4 else step,
-            label = "setup_step",
-            transitionSpec = {
-                fadeIn(animationSpec = tween(400)) togetherWith fadeOut(animationSpec = tween(400))
-            }
-        ) { currentStep ->
-            AuthSplitLayout(
-                cardContent = {
-                    with(sharedTransitionScope) {
+    with(sharedTransitionScope) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.White)
+                .sharedBounds(
+                    rememberSharedContentState(key = containerKey),
+                    animatedVisibilityScope = animatedVisibilityScope,
+                    boundsTransform = { _, _ -> tween(500) }
+                )
+                .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyUp) {
+                        when (event.key) {
+                            Key.Escape -> {
+                                if (isLoading) onCancel() else goBack()
+                                true
+                            }
+                            Key.Enter -> {
+                                if (isSuccess) {
+                                    onComplete()
+                                    true
+                                } else if (step == 1 && name.isNotBlank()) {
+                                    handleNameSubmit()
+                                    true
+                                } else false
+                            }
+                            else -> false
+                        }
+                    } else false
+                }
+                .pinInputHandler(
+                    focusRequester = mainFocusRequester,
+                    enabled = step >= 2 && !isLoading && !isRecoveringFromError,
+                    onDigit = { handlePinInput(it) },
+                    onDelete = { removeDigit() },
+                    onEscape = { }
+                )
+        ) {
+            AnimatedContent(
+                targetState = if (isSuccess) 4 else step,
+                label = "setup_step",
+                transitionSpec = {
+                    fadeIn(animationSpec = tween(400)) togetherWith fadeOut(animationSpec = tween(400))
+                }
+            ) { currentStep ->
+                AuthSplitLayout(
+                    cardContent = {
                         BoxWithConstraints(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             val metrics = rememberCardMetrics(maxWidth, maxHeight)
 
@@ -160,9 +219,10 @@ fun SetupScreen(
                                 modifier = Modifier
                                     .width(targetWidth)
                                     .sharedBounds(
-                                        sharedContentState = rememberSharedContentState(key = "card-${cachedCardId}"),
+                                        sharedContentState = rememberSharedContentState(key = cardKey),
                                         animatedVisibilityScope = animatedVisibilityScope,
-                                        boundsTransform = { _, _ -> tween(500) }
+                                        boundsTransform = { _, _ -> tween(500) },
+                                        renderInOverlayDuringTransition = false
                                     )
                             ) {
                                 val showOverlay = currentStep >= 2
@@ -184,87 +244,89 @@ fun SetupScreen(
                                                 }
                                             } else {
                                                 val title = when {
-                                                    isError -> "NO MATCH"
+                                                    isError -> "WRONG PIN"
+                                                    isLocalError -> "NO MATCH"
                                                     currentStep == 2 -> if (cardHasPin) "ENTER PIN" else "CREATE PIN"
                                                     else -> "CONFIRM PIN"
                                                 }
-                                                PinOverlay(title, pinInput.length, isError, shakeOffset.value, metrics)
+                                                val showErrorState = isLocalError || isError
+                                                PinOverlay(title, pinInput.length, showErrorState, shakeOffset.value, metrics)
                                             }
                                         }
                                     } else null
                                 )
                             }
                         }
-                    }
-                },
-                inputContent = {
-                    BoxWithConstraints(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        val metrics = rememberNumPadMetrics(maxWidth, maxHeight)
-
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(metrics.buttonSize * 0.25f),
-                            modifier = Modifier.widthIn(max = 400.dp)
+                    },
+                    inputContent = {
+                        BoxWithConstraints(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.fillMaxSize()
                         ) {
-                            when (currentStep) {
-                                1 -> NameInputSection(name, { name = it }, handleNameSubmit, metrics.buttonSize)
-                                4 -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Spacer(Modifier.height(16.dp))
-                                    Text("Setup successful!", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                                    Spacer(Modifier.height(32.dp))
-                                    Button(
-                                        onClick = onComplete,
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color.Black),
-                                        modifier = Modifier.height(50.dp).width(200.dp)
-                                    ) {
-                                        Text("Open Dashboard", fontWeight = FontWeight.Bold)
+                            val metrics = rememberNumPadMetrics(maxWidth, maxHeight)
+
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(metrics.buttonSize * 0.25f),
+                                modifier = Modifier.widthIn(max = 400.dp)
+                            ) {
+                                when (currentStep) {
+                                    1 -> NameInputSection(name, { name = it }, handleNameSubmit, metrics.buttonSize)
+                                    4 -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Spacer(Modifier.height(16.dp))
+                                        Text("Setup successful!", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                                        Spacer(Modifier.height(32.dp))
+                                        Button(
+                                            onClick = onComplete,
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color.Black),
+                                            modifier = Modifier.height(50.dp).width(200.dp)
+                                        ) {
+                                            Text("Open Dashboard", fontWeight = FontWeight.Bold)
+                                        }
                                     }
+                                    else -> ResizableNumPad(metrics.buttonSize, metrics.textSize, {handlePinInput(it) }, { removeDigit() })
                                 }
-                                else -> ResizableNumPad(metrics.buttonSize, metrics.textSize, {handlePinInput(it) }, { removeDigit() })
                             }
                         }
-                    }
-                },
-                bottomContent = {
-                    val buttonText = if (isLoading) "Cancel" else if (isSuccess) "Close" else "Cancel"
-                    val buttonAction = if (isLoading) onCancel else { { goBack() } }
+                    },
+                    bottomContent = {
+                        val buttonText = if (isLoading) "Cancel" else if (isSuccess) "Close" else "Cancel"
+                        val buttonAction = if (isLoading) onCancel else { { goBack() } }
 
-                    TextButton(onClick = buttonAction, modifier = Modifier.height(48.dp)) {
-                        Text(
-                            text = buttonText,
-                            color = if (isLoading) Color.White.copy(alpha = 0.8f) else Color.Red,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 18.sp
-                        )
+                        TextButton(onClick = buttonAction, modifier = Modifier.height(48.dp)) {
+                            Text(
+                                text = buttonText,
+                                color = if (isLoading) Color.White.copy(alpha = 0.8f) else Color.Red,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 18.sp
+                            )
+                        }
                     }
-                }
-            )
-        }
+                )
+            }
 
-        if (isLoading) {
-            Box(
-                modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.8f)).zIndex(100f).clickable(enabled = false) {},
-                contentAlignment = Alignment.Center
-            ) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    Column(
-                        modifier = Modifier.align(Alignment.Center),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(60.dp), strokeWidth = 4.dp)
-                        Spacer(Modifier.height(32.dp))
-                        Text("Please hold card to your device", style = MaterialTheme.typography.headlineSmall, color = Color.White, fontWeight = FontWeight.Bold)
-                    }
+            if (isLoading) {
+                Box(
+                    modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.8f)).zIndex(100f).clickable(enabled = false) {},
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        Column(
+                            modifier = Modifier.align(Alignment.Center),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            CircularProgressIndicator(color = Color.White, modifier = Modifier.size(60.dp), strokeWidth = 4.dp)
+                            Spacer(Modifier.height(32.dp))
+                            Text("Please hold card to your device", style = MaterialTheme.typography.headlineSmall, color = Color.White, fontWeight = FontWeight.Bold)
+                        }
 
-                    Box(
-                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(60.dp),
-                        contentAlignment = Alignment.TopCenter
-                    ) {
-                        TextButton(onClick = onCancel, modifier = Modifier.height(48.dp)) {
-                            Text("Cancel", color = Color.Red, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                        Box(
+                            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(60.dp),
+                            contentAlignment = Alignment.TopCenter
+                        ) {
+                            TextButton(onClick = onCancel, modifier = Modifier.height(48.dp)) {
+                                Text("Cancel", color = Color.Red, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                            }
                         }
                     }
                 }

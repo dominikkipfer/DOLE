@@ -12,6 +12,7 @@ public final class Constants {
     public static final String DITTO_AUTH_URL = "https://i83inp.cloud.dittolive.app";
     public static final String DITTO_WEBSOCKET_URL = "wss://i83inp.cloud.dittolive.app";
 
+
     // --- FILESYSTEM ---
     public static final String COLLECTION = "wallet_logs";
     public static final String FILE_WALLET_DATA = "wallet_data.json";
@@ -34,7 +35,6 @@ public final class Constants {
     public static final String SIGNATURE_ALGORITHM = "SHA256withECDSA";
     public static final String KEY_ALGORITHM = "EC";
 
-    public static final byte[] ZERO_HASH = new byte[32];
 
     public static final byte[] ROOT_CA_BYTES = {
             (byte)0x04,
@@ -51,20 +51,23 @@ public final class Constants {
 
     // --- SIZES ---
     public static final byte PIN_SIZE = 4;
-    public static final short ID_SIZE = 20;
-    public static final short HASH_SIZE = 32;
-    public static final short GOC_SIZE = 4;
-    public static final short LEN_SIZE = 2;
-    public static final int HEX_CHARS_PER_BYTE = 2;
+    public static final byte ID_SIZE = 20;
+    public static final byte HASH_SIZE = 32;
+    public static final byte GOC_SIZE = 4;
+    public static final byte LEN_SIZE = 2;
+    public static final byte HEX_CHARS_PER_BYTE = 2;
+
+    public static final byte[] ZERO_HASH = new byte[32];
+    public static final byte[] ZERO_ID = new byte[ID_SIZE];
 
     // --- LOG STRUCTURE ---
-    public static final short LOG_PAYLOAD_SIZE = 81;
-    public static final short LOG_OFFSET_SEQ = 0;
-    public static final short LOG_OFFSET_PREV_HASH = 4;
-    public static final short LOG_OFFSET_TYPE = 36;
-    public static final short LOG_OFFSET_AUTHOR = 37;
-    public static final short LOG_OFFSET_TARGET = 57;
-    public static final short LOG_OFFSET_GOC = 77;
+    public static final byte LOG_PAYLOAD_SIZE = 81;
+    public static final byte LOG_OFFSET_SEQ = 0;
+    public static final byte LOG_OFFSET_PREV_HASH = 4;
+    public static final byte LOG_OFFSET_TYPE = 36;
+    public static final byte LOG_OFFSET_AUTHOR = 37;
+    public static final byte LOG_OFFSET_TARGET = 57;
+    public static final byte LOG_OFFSET_GOC = 77;
 
     // --- JSON KEYS ---
     public static final String KEY_SEQ = "seq";
@@ -130,16 +133,16 @@ public final class Constants {
     }
 
     // --- HARDWARE LIMITS ---
+    public static final short CARD_RAM_BUFFER_SIZE = 512;
     public static final short CARD_MAX_PEERS = 200;
-    public static final short CARD_PEER_ROW_SIZE = 28;
-    public static final short CARD_PEER_OFFSET_ID = 0;
-    public static final short CARD_PEER_OFFSET_RECV = 20;
-    public static final short CARD_PEER_OFFSET_SENT = 24;
-    public static final int CARD_RAM_BUFFER_SIZE = 512;
+    public static final byte CARD_PEER_ROW_SIZE = 28;
+    public static final byte CARD_PEER_OFFSET_ID = 0;
+    public static final byte CARD_PEER_OFFSET_RECV = 20;
+    public static final byte CARD_PEER_OFFSET_SENT = 24;
 
     // --- APDU ---
-    public static final int APDU_MINT_BURN_SIZE = GOC_SIZE;
-    public static final int APDU_SEND_SIZE = ID_SIZE + GOC_SIZE;
+    public static final byte APDU_MINT_BURN_SIZE = GOC_SIZE;
+    public static final byte APDU_SEND_SIZE = ID_SIZE + GOC_SIZE;
 
     // --- STATUS WORDS ---
     public static final short SW_NO_ERROR = (short) 0x9000;

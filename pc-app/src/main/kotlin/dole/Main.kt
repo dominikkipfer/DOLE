@@ -1,6 +1,7 @@
 package dole
 
 import androidx.compose.runtime.remember
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import dole.card.PCSmartCard
@@ -8,11 +9,10 @@ import dole.ledger.PCLedgerService
 import dole.gui.WalletApp
 import dole.gui.WalletViewModel
 import dole.ledger.Ledger
-import dole.resources.DOLE
-import dole.resources.Res
 import dole.wallet.SettingsService
-import org.jetbrains.compose.resources.painterResource
+import org.jetbrains.compose.resources.decodeToSvgPainter
 import java.io.File
+import kotlin.jvm.java
 
 fun main() = application {
     val userHome = System.getProperty("user.home")
@@ -28,11 +28,14 @@ fun main() = application {
             )
         }
     }
+    val icon = remember {
+        this::class.java.getResourceAsStream("/DOLE.svg")!!.readAllBytes().decodeToSvgPainter(density = Density(1f))
+    }
 
     Window(
         onCloseRequest = ::exitApplication,
         title = "DOLE",
-        icon = painterResource(Res.drawable.DOLE)
+        icon = icon
     ) {
         WalletApp(viewModel)
     }

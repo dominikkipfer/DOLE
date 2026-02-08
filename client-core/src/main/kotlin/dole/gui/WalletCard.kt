@@ -322,7 +322,6 @@ private fun EdgeLabelTexts(
 ) {
     val name = account.name()
 
-    // Gewichtete Längenberechnung
     var weightedLength = 0f
     name.forEach { char ->
         weightedLength += when (char) {

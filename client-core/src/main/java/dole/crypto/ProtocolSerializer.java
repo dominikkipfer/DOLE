@@ -91,6 +91,12 @@ public class ProtocolSerializer {
         if (author == null || author.length != Constants.ID_SIZE) {
             throw new IllegalArgumentException("author must be exactly " + Constants.ID_SIZE + " bytes");
         }
+
+        if (type == Constants.OP_GENESIS || type == Constants.OP_MINT || type == Constants.OP_BURN) target = null;
+        else if (type == Constants.OP_SEND) {
+            if (target == null) throw new IllegalArgumentException("Target ID is required for SEND operation");
+        }
+
         if (target != null && target.length != Constants.ID_SIZE) {
             throw new IllegalArgumentException("target must be exactly " + Constants.ID_SIZE + " bytes or null");
         }

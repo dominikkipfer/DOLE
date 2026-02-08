@@ -222,4 +222,11 @@ public class PCSmartCard implements SmartCard {
         byte[] data = transmitInternal(new CommandAPDU(Constants.CLA_PROPRIETARY, Constants.OP_GET_STATUS, 0x00, 0x00, 256));
         return data.length > 1 && data[1] == (byte) 0x01;
     }
+
+    @Override
+    public int getPinRetries() throws Exception {
+        byte[] data = transmitInternal(new CommandAPDU(Constants.CLA_PROPRIETARY, Constants.OP_GET_STATUS, 0x00, 0x00, 256));
+        if (data.length > 2) return data[2];
+        return 3;
+    }
 }

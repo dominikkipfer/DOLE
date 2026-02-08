@@ -3,6 +3,7 @@ package dole.wallet;
 import java.io.Closeable;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +21,7 @@ import dole.balance.BalanceResult;
 import dole.ledger.LedgerService;
 import dole.balance.TransactionDelta;
 import dole.ledger.Ledger;
+import dole.ledger.Ledger.AccountState;
 import dole.ledger.LedgerEntry;
 import dole.transaction.BurnTransaction;
 import dole.transaction.MintTransaction;
@@ -39,12 +41,32 @@ public class WalletService implements Closeable {
     private final Map<String, LedgerEntry> knownGenesisLogs = new ConcurrentHashMap<>();
 
     private final Set<String> processedTxIds = Collections.synchronizedSet(new HashSet<>());
-    private boolean isFirstLoad = true;
+
+    private final Set<String> sessionVerifiedNewIds = Collections.synchronizedSet(new HashSet<>());
+    private final Set<String> recoveredTxIds = Collections.synchronizedSet(new HashSet<>());
+
+    private List<LedgerEntry> cachedLogs = new ArrayList<>();
+
+    private boolean isFullHistoryMode = false;
+    private volatile boolean isClosed = false;
+
+    private int snapshotLastSeq = 0;
+
+    private final Map<String, Integer> snapshotReceivedGocs = new HashMap<>();
+    private final Map<String, Integer> snapshotSentGocs = new HashMap<>();
+    private int snapshotMintGoc = 0;
+    private int snapshotBurnGoc = 0;
+
+    private final Map<String, Integer> startupReceivedGocs = new HashMap<>();
+    private final Map<String, Integer> startupSentGocs = new HashMap<>();
+    private int startupMintGoc = 0;
+    private int startupBurnGoc = 0;
 
     private Consumer<WalletState> onStateUpdateListener;
 
     public record WalletState(
             int balance,
+            int confirmedBalance,
             List<TransactionDelta> fullHistory,
             List<TransactionDelta> recentlySynced,
             List<Transaction> unsyncedIncoming,
@@ -73,11 +95,42 @@ public class WalletService implements Closeable {
         this.onStateUpdateListener = listener;
     }
 
-    public void start() {
-        ledgerService.observeRelevantLogs(ownID, this::onLedgerUpdate);
+    public void setSearchMode(boolean enabled) {
+        if (enabled) {
+            this.isFullHistoryMode = true;
+            ledgerService.setHistorySyncMode(true);
+            onLedgerUpdate(this.cachedLogs);
+        } else {
+            this.isFullHistoryMode = false;
+            ledgerService.setHistorySyncMode(false);
+        }
     }
 
-    private void onLedgerUpdate(List<LedgerEntry> allLogs) {
+    public void start() {
+        this.snapshotLastSeq = settingsService.getLastKnownSeq(ownID);
+        this.snapshotReceivedGocs.putAll(settingsService.getLastReceivedGocs(ownID));
+        this.snapshotSentGocs.putAll(settingsService.getLastSentGocs(ownID));
+
+        AccountState as = settingsService.getInitialAccountState(ownID);
+        this.snapshotMintGoc = as.totalMinted;
+        this.snapshotBurnGoc = as.totalBurned;
+        this.startupReceivedGocs.putAll(this.snapshotReceivedGocs);
+        this.startupSentGocs.putAll(this.snapshotSentGocs);
+        this.startupMintGoc = this.snapshotMintGoc;
+        this.startupBurnGoc = this.snapshotBurnGoc;
+
+        boolean hasLocalHistory = (snapshotMintGoc > 0 || snapshotBurnGoc > 0 || !snapshotSentGocs.isEmpty() || !snapshotReceivedGocs.isEmpty());
+        boolean needAutoResync = (snapshotLastSeq > 0 && !hasLocalHistory);
+        int effectiveSeq = needAutoResync ? 0 : snapshotLastSeq;
+
+        ledgerService.setHistorySyncMode(isFullHistoryMode);
+        ledgerService.observeRelevantLogs(ownID, effectiveSeq, snapshotReceivedGocs, this::onLedgerUpdate);
+    }
+
+    private synchronized void onLedgerUpdate(List<LedgerEntry> allLogs) {
+        if (isClosed) return;
+
+        this.cachedLogs = allLogs;
         for (LedgerEntry log : allLogs) {
             if (log.seq == 0) knownGenesisLogs.put(log.getAuthorID(), log);
         }
@@ -89,59 +142,146 @@ public class WalletService implements Closeable {
                                                    .filter(Objects::nonNull)
                                                    .collect(Collectors.toList());
 
-        BalanceResult balanceResult = ledgerService.calculateBalance(allTransactions, ownID);
-        List<TransactionDelta> fullHistory = balanceResult.items();
+        boolean isRebuildingSnapshots = isFullHistoryMode ||
+                (snapshotLastSeq > 0 && snapshotMintGoc == 0 && snapshotBurnGoc == 0 && snapshotSentGocs.isEmpty() && snapshotReceivedGocs.isEmpty());
+
+        Map<String, Integer> newOutgoingGocs = new HashMap<>();
+        Map<String, Integer> allIncomingForBalance = new HashMap<>();
+        Map<String, Integer> persistableIncomingGocs = new HashMap<>();
+
+        boolean mintBurnUpdated = false;
+
+        for (Transaction tx : allTransactions) {
+            boolean isOutgoing = tx.author().equals(ownID);
+
+            switch (tx) {
+                case MintTransaction m when isOutgoing -> {
+                    if (m.goc() > snapshotMintGoc) {
+                        snapshotMintGoc = (int) m.goc();
+                        mintBurnUpdated = true;
+                    }
+                }
+                case BurnTransaction b when isOutgoing -> {
+                    if (b.goc() > snapshotBurnGoc) {
+                        snapshotBurnGoc = (int) b.goc();
+                        mintBurnUpdated = true;
+                    }
+                }
+                case SendTransaction s -> {
+                    if (isOutgoing) {
+                        snapshotSentGocs.merge(s.target(), (int) s.goc(), Math::max);
+                        newOutgoingGocs.put(s.target(), (int) s.goc());
+                    } else if (s.target().equals(ownID)) {
+                        allIncomingForBalance.merge(s.author(), (int) s.goc(), Math::max);
+
+                        if (isRebuildingSnapshots || sessionVerifiedNewIds.contains(tx.id()) || recoveredTxIds.contains(tx.id())) {
+                            persistableIncomingGocs.merge(s.author(), (int) s.goc(), Math::max);
+                        }
+                    }
+                }
+                default -> { }
+            }
+        }
+
+        long totalSent = snapshotSentGocs.values().stream().mapToLong(Integer::longValue).sum();
+
+        int displayBalance = calculateInternalBalance(totalSent, allIncomingForBalance);
+        int confirmedBalance = calculateInternalBalance(totalSent, persistableIncomingGocs);
+
+        if (!newOutgoingGocs.isEmpty()) settingsService.importLastSentGocs(ownID, newOutgoingGocs);
+        if (mintBurnUpdated) settingsService.updateAccountState(ownID, snapshotMintGoc, snapshotBurnGoc);
+
+        if (!persistableIncomingGocs.isEmpty()) {
+            settingsService.importLastReceivedGocs(ownID, persistableIncomingGocs);
+            persistableIncomingGocs.forEach((k, v) -> snapshotReceivedGocs.merge(k, v, Math::max));
+        }
+
+        settingsService.saveBalance(ownID, displayBalance);
+
+        BalanceResult listResult = ledgerService.calculateBalance(allTransactions, ownID);
+
+        Set<String> unsyncedTxIds = new HashSet<>();
+        List<Transaction> trulyUnsyncedTxs = new ArrayList<>();
+        long unsyncedSum = 0;
+
+        for (LedgerEntry log : allLogs) {
+            if (log.type == Constants.OperationType.SEND.code && ownID.equals(log.getTargetID())) {
+                int lastKnown = snapshotReceivedGocs.getOrDefault(log.getAuthorID(), -1);
+                if (log.goc > lastKnown) {
+                    String txId = CryptoUtils.bytesToHex(log.getHash());
+                    unsyncedTxIds.add(txId);
+                    Transaction tx = mapLogToTransaction(log);
+                    if (tx != null) {
+                        trulyUnsyncedTxs.add(tx);
+                        long delta = listResult.items().stream()
+                                               .filter(item -> item.tx().id().equals(txId))
+                                               .findFirst()
+                                               .map(TransactionDelta::delta)
+                                               .orElse(0L);
+                        unsyncedSum += delta;
+                    }
+                }
+            }
+        }
+
+        List<TransactionDelta> fullHistory = new ArrayList<>();
+
+        for (TransactionDelta item : listResult.items()) {
+            TransactionDelta finalItem = item;
+            if (item.tx() instanceof MintTransaction m && m.author().equals(ownID)) {
+                if (item.delta() == m.goc() && startupMintGoc > 0) {
+                    long corrected = item.delta() - startupMintGoc;
+                    if (corrected > 0 && m.goc() > startupMintGoc) finalItem = new TransactionDelta(item.tx(), corrected);
+                }
+            }
+            else if (item.tx() instanceof BurnTransaction b && b.author().equals(ownID)) {
+                if (item.delta() == b.goc() && startupBurnGoc > 0) {
+                    long corrected = item.delta() - startupBurnGoc;
+                    if (corrected > 0 && b.goc() > startupBurnGoc) finalItem = new TransactionDelta(item.tx(), corrected);
+                }
+            }
+            else if (item.tx() instanceof SendTransaction s) {
+                if (!s.author().equals(ownID)) {
+                    if (item.delta() == s.goc()) {
+                        int lastKnown = startupReceivedGocs.getOrDefault(s.author(), 0);
+                        if (lastKnown > 0 && s.goc() > lastKnown) {
+                            long corrected = item.delta() - lastKnown;
+                            finalItem = new TransactionDelta(item.tx(), corrected);
+                        }
+                    }
+                } else {
+                    if (item.delta() == s.goc()) {
+                        int lastKnown = startupSentGocs.getOrDefault(s.target(), 0);
+                        if (lastKnown > 0 && s.goc() > lastKnown) {
+                            long corrected = item.delta() - lastKnown;
+                            finalItem = new TransactionDelta(item.tx(), corrected);
+                        }
+                    }
+                }
+            }
+
+            if (isFullHistoryMode || !unsyncedTxIds.contains(finalItem.tx().id())) fullHistory.add(finalItem);
+        }
 
         List<TransactionDelta> newItems = new ArrayList<>();
 
         synchronized (processedTxIds) {
             for (TransactionDelta item : fullHistory) {
                 String txId = item.tx().id();
-                if (!processedTxIds.contains(txId)) {
-                    processedTxIds.add(txId);
-                    if (!isFirstLoad) newItems.add(item);
-                }
-            }
-            isFirstLoad = false;
-        }
 
-        Map<String, Integer> lastReceivedGocs = settingsService.getLastReceivedGocs(ownID);
-        List<LedgerEntry> potentialUnsynced = new ArrayList<>();
-
-        for (LedgerEntry log : allLogs) {
-            if (log.type == Constants.OperationType.SEND.code && ownID.equals(log.getTargetID())) {
-                int lastKnown = lastReceivedGocs.getOrDefault(log.getAuthorID(), -1);
-                if (log.goc > lastKnown) potentialUnsynced.add(log);
-            }
-        }
-
-        if (!potentialUnsynced.isEmpty()) syncCard(potentialUnsynced);
-
-        Map<String, Integer> updatedGocs = settingsService.getLastReceivedGocs(ownID);
-        List<Transaction> trulyUnsyncedTxs = new ArrayList<>();
-        long unsyncedSum = 0;
-
-        for (LedgerEntry log : potentialUnsynced) {
-            int currentKnown = updatedGocs.getOrDefault(log.getAuthorID(), -1);
-            if (log.goc > currentKnown) {
-                String txId = CryptoUtils.bytesToHex(log.getHash());
-                long delta = balanceResult.items().stream()
-                                          .filter(item -> item.tx().id().equals(txId))
-                                          .findFirst()
-                                          .map(TransactionDelta::delta)
-                                          .orElse(0L);
-
-                Transaction tx = mapLogToTransaction(log);
-                if (tx != null) {
-                    trulyUnsyncedTxs.add(tx);
-                    unsyncedSum += delta;
+                if (sessionVerifiedNewIds.contains(txId)) {
+                    if (!processedTxIds.contains(txId)) {
+                        processedTxIds.add(txId);
+                        newItems.add(item);
+                    }
                 }
             }
         }
 
         if (onStateUpdateListener != null) {
             onStateUpdateListener.accept(new WalletState(
-                    balanceResult.totalBalance(),
+                    displayBalance,
+                    confirmedBalance,
                     fullHistory,
                     newItems,
                     trulyUnsyncedTxs,
@@ -151,16 +291,52 @@ public class WalletService implements Closeable {
         }
     }
 
-    private void syncCard(List<LedgerEntry> entriesToSync) {
-        Map<String, Integer> currentGocs = settingsService.getLastReceivedGocs(ownID);
+    private int calculateInternalBalance(long totalSent, Map<String, Integer> additionalIncoming) {
+        Map<String, Integer> combinedMap = new HashMap<>(snapshotReceivedGocs);
+        additionalIncoming.forEach((k, v) -> combinedMap.merge(k, v, Math::max));
+        long totalRecv = combinedMap.values().stream().mapToLong(Integer::longValue).sum();
+        return (int) (snapshotMintGoc - snapshotBurnGoc - totalSent + totalRecv);
+    }
+
+    public synchronized void syncIncomingTransactions(List<Transaction> txs) {
+        if (isClosed) return;
+        if (txs.isEmpty()) return;
+
+        List<LedgerEntry> entriesToSync = new ArrayList<>();
+        for (Transaction tx : txs) {
+            cachedLogs.stream()
+                      .filter(l -> CryptoUtils.bytesToHex(l.getHash()).equals(tx.id()))
+                      .findFirst()
+                      .ifPresent(entriesToSync::add);
+        }
+        if (entriesToSync.isEmpty()) return;
+
+        for (LedgerEntry log : entriesToSync) {
+            internalSyncCard(Collections.singletonList(log));
+            onLedgerUpdate(this.cachedLogs);
+
+            try { Thread.sleep(20); } catch(InterruptedException ignored) {}
+        }
+    }
+
+    private void internalSyncCard(List<LedgerEntry> entriesToSync) {
         for (LedgerEntry log : entriesToSync) {
             try {
                 applyLogToCard(log);
-                currentGocs.put(log.getAuthorID(), log.goc);
+                sessionVerifiedNewIds.add(CryptoUtils.bytesToHex(log.getHash()));
             } catch (Exception e) {
-                System.err.println("Auto-Sync failed for log " + log.seq + ": " + e.getMessage());
+                if (isCardAlreadySyncedError(e)) {
+                    recoveredTxIds.add(CryptoUtils.bytesToHex(log.getHash()));
+                } else {
+                    System.err.println("Manual-Sync failed: " + e.getMessage());
+                }
             }
         }
+    }
+
+    private boolean isCardAlreadySyncedError(Exception e) {
+        String msg = e.getMessage();
+        return msg != null && (msg.contains("6985") || msg.contains("Conditions not satisfied"));
     }
 
     private void applyLogToCard(LedgerEntry log) throws Exception {
@@ -186,7 +362,6 @@ public class WalletService implements Closeable {
         );
 
         card.processReceive(payload);
-        settingsService.updateLastReceivedGoc(this.ownID, authorId, log.goc);
     }
 
     private void ensurePeerRegistered(String peerID) throws Exception {
@@ -214,7 +389,9 @@ public class WalletService implements Closeable {
     }
 
     public Transaction send(String receiverID, int amount) throws Exception {
-        try { ensurePeerRegistered(receiverID); } catch (Exception ignored) {}
+        try {
+            ensurePeerRegistered(receiverID);
+        } catch (Exception ignored) {}
         return executeTx(ProtocolSerializer.buildSendPayload(pinBytes, receiverID, amount), card::processSend);
     }
 
@@ -227,12 +404,16 @@ public class WalletService implements Closeable {
         entry.setAttachments(cert, myPublicKeyBytes);
         ledgerService.saveEntry(entry);
         knownGenesisLogs.put(ownID, entry);
-        ledgerService.observeRelevantLogs(ownID, this::onLedgerUpdate);
+
+        if (ledger != null) ledger.processLogBatch(Collections.singletonList(entry), ownID);
     }
 
     private Transaction executeTx(byte[] payload, CardOperation op) throws Exception {
         byte[] response = op.execute(payload);
         LedgerEntry entry = LedgerEntry.fromCardResponse(response);
+        String txId = CryptoUtils.bytesToHex(entry.getHash());
+
+        sessionVerifiedNewIds.add(txId);
         ledgerService.saveEntry(entry);
         return mapLogToTransaction(entry);
     }
@@ -253,8 +434,10 @@ public class WalletService implements Closeable {
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
+        isClosed = true;
         if (settingsService != null) settingsService.persist();
+        if (ledgerService != null) ledgerService.stopObserving();
     }
 
     @FunctionalInterface

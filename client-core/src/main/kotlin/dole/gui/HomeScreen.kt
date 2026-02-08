@@ -21,12 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -68,9 +63,8 @@ import kotlin.math.roundToInt
 fun HomeScreen(
     accounts: List<StoredAccount>,
     onAccountClick: (StoredAccount) -> Unit,
-    onAddAccount: () -> Unit,
     physicallyConnectedAccount: StoredAccount?,
-    isNewCardDetected: Boolean,
+    isOverlayVisible: Boolean,
     initialSelectedAccountId: String? = null,
     sharedTransitionScope: SharedTransitionScope,
     animatedVisibilityScope: AnimatedVisibilityScope
@@ -338,7 +332,8 @@ fun HomeScreen(
                                 modifier.sharedBounds(
                                     sharedContentState = rememberSharedContentState(key = "card-$id"),
                                     animatedVisibilityScope = animatedVisibilityScope,
-                                    boundsTransform = { _, _ -> tween(500) }
+                                    boundsTransform = { _, _ -> tween(500) },
+                                    renderInOverlayDuringTransition = false
                                 )
                             }
                         }
@@ -361,7 +356,7 @@ fun HomeScreen(
                 }
             }
 
-            if (accounts.isEmpty() && !isNewCardDetected) {
+            if (accounts.isEmpty() && !isOverlayVisible) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("Hold your card to your device.", color = Color.Gray)
                 }
@@ -393,17 +388,6 @@ fun HomeScreen(
                     fontWeight = FontWeight.Bold,
                     color = Color.Black
                 )
-                IconButton(
-                    onClick = onAddAccount,
-                    enabled = isNewCardDetected,
-                    modifier = Modifier.background(Color.White, androidx.compose.foundation.shape.CircleShape).size(32.dp)
-                ) {
-                    Icon(
-                        Icons.Default.Add, "Add",
-                        tint = if (isNewCardDetected) Color.Blue else Color.LightGray,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
             }
         }
     }

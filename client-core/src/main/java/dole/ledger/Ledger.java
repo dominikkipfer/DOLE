@@ -48,7 +48,7 @@ public class Ledger {
                     validLogs.add(log);
                 }
             } catch (Exception e) {
-                System.out.println("LOG REJECTED: " + e.getMessage());
+                System.out.println("LOG REJECTED (" + log.seq + "): " + e.getMessage());
             }
         }
         return validLogs;
@@ -64,7 +64,16 @@ public class Ledger {
         boolean isMe = author.equals(activeUserId);
 
         if (!Arrays.equals(log.getPrevHash(), expectedHash)) {
-            if (isMe) throw new Exception("My Hash Chain Broken");
+            if (isMe) System.out.println("WARN: Local Hash mismatch");
+        }
+
+        if (log.type == Constants.OperationType.GENESIS.code || log.type == Constants.OperationType.MINT.code ||
+                log.type == Constants.OperationType.BURN.code) {
+
+            String targetId = log.getTargetID();
+            String zeroIdHex = CryptoUtils.bytesToHex(Constants.ZERO_ID);
+
+            if (!targetId.equals(zeroIdHex)) throw new Exception("Invalid target for operation (must be zero)");
         }
 
         PublicKey key = keyStore.get(author);
@@ -102,7 +111,7 @@ public class Ledger {
     }
 
     public static class AccountState {
-        public int lastSeq = -1;
+        public int lastSeq = 0;
         public int totalMinted = 0;
         public int totalBurned = 0;
     }

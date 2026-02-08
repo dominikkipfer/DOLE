@@ -169,4 +169,11 @@ public class AndroidSmartCard implements SmartCard {
         byte[] data = transmit(Constants.OP_GET_STATUS, null);
         return data.length > 1 && data[1] == (byte) 0x01;
     }
+
+    @Override
+    public int getPinRetries() throws Exception {
+        byte[] data = transmit(Constants.OP_GET_STATUS, null);
+        if (data.length > 2) return data[2];
+        return 3;
+    }
 }
