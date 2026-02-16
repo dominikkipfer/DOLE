@@ -79,12 +79,15 @@ class WalletViewModel(
     var syncStatus by mutableStateOf<String?>(null); private set
     var currentId by mutableStateOf<String?>(null); private set
     var currentName by mutableStateOf("Unknown"); private set
+    var userMessage by mutableStateOf<String?>(null); private set
 
     var isSearchMode by mutableStateOf(false); private set
     var filterTypes = mutableStateListOf<TxFilterType>()
     var filterPeerQuery by mutableStateOf("")
     var sortField by mutableStateOf(SortField.NONE)
     var sortAscending by mutableStateOf(false)
+
+    var isMinter by mutableStateOf(false); private set
 
     val isBalancePending by derivedStateOf {
         pendingActions.isNotEmpty() || _unsyncedTransactions.isNotEmpty()
@@ -111,7 +114,8 @@ class WalletViewModel(
             _fullHistory.none { it.tx.id() == unsynced.tx.id() }
         }
 
-        val filtered = combinedList.filter { item ->
+        val uniqueList = combinedList.distinctBy { it.tx.id() }
+        val filtered = uniqueList.filter { item ->
             val tx = item.tx
             val isMe = tx.author() == currentId
             val typeEnum = when (tx) {
@@ -253,6 +257,18 @@ class WalletViewModel(
         handleAction(action)
     }
 
+    fun showUserMessage(msg: String) {
+        userMessage = msg
+    }
+
+    fun dismissUserMessage() {
+        userMessage = null
+    }
+
+    fun getPeerName(id: String): String? {
+        return availableAccounts.find { it.id() == id }?.name()
+    }
+
     fun cycleSort(field: SortField) {
         if (sortField == field) {
             if (!sortAscending) {
@@ -377,9 +393,15 @@ class WalletViewModel(
                     throw e
                 }
 
+                val isMinter = try {
+                    c.isMinter()
+                } catch(_: Exception) { false }
+
                 val id = CryptoUtils.getPersonIdAsHex(c.getPublicKey())
                 val pinHash = CryptoUtils.bytesToHex(CryptoUtils.sha256(pinB))
                 settingsService.saveAccount(id, name, pinHash)
+                settingsService.setMinterStatus(id, isMinter)
+
                 withContext(Dispatchers.Main) { availableAccounts = settingsService.accounts }
 
                 val tempWs = WalletService(c, pin.toCharArray(), settingsService, ledgerService, ledger)
@@ -492,6 +514,9 @@ class WalletViewModel(
         _fullHistory.clear()
         val savedBal = settingsService.getLastBalance(account.id())
         this.balance = savedBal
+
+        this.isMinter = settingsService.isMinter(account.id())
+
         loadPendingFromDisk()
         if (connectedCard != null) {
             connectWalletService(connectedCard, pin)
@@ -518,6 +543,15 @@ class WalletViewModel(
                     throw Exception("Card read failed during connection")
                 }
                 if (realCardId != currentId) throw Exception("Card mismatch! Expected $currentId but found $realCardId")
+
+                val cardMinterStatus = try {
+                    card.isMinter()
+                } catch(_: Exception) { false }
+                settingsService.setMinterStatus(currentId!!, cardMinterStatus)
+                withContext(Dispatchers.Main) {
+                    isMinter = cardMinterStatus
+                }
+
                 val ws = WalletService(card, pin.toCharArray(), settingsService, ledgerService, ledger)
                 if (isSearchMode) ws.setSearchMode(true)
                 ws.setOnStateUpdateListener { state ->
@@ -927,5 +961,6 @@ class WalletViewModel(
         filterPeerQuery = ""
         sortField = SortField.NONE
         sortAscending = false
+        isMinter = false
     }
 }

@@ -171,7 +171,10 @@ public class PCLedgerService implements LedgerService {
                                                   .filter(this::isLogRelevant)
                                                   .collect(Collectors.toList());
 
-                if (!entries.isEmpty()) currentLogConsumer.accept(entries);
+                if (!entries.isEmpty()) {
+                    Consumer<List<LedgerEntry>> consumer = currentLogConsumer;
+                    if (consumer != null) consumer.accept(entries);
+                }
             });
         } catch (Exception e) {
             logger.error("Failed to register observer", e);

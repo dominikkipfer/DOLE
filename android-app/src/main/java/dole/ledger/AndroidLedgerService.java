@@ -177,7 +177,8 @@ public class AndroidLedgerService implements LedgerService {
 
                 if (!entries.isEmpty()) {
                     Log.d(TAG, "Received " + entries.size() + " entries.");
-                    currentLogConsumer.accept(entries);
+                    Consumer<List<LedgerEntry>> consumer = currentLogConsumer;
+                    if (consumer != null) consumer.accept(entries);
                 }
                 return Unit.INSTANCE;
             });

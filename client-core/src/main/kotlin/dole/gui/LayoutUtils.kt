@@ -45,6 +45,8 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.ClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
@@ -284,4 +286,14 @@ fun SafeOverlay(onDismissRequest: () -> Unit, content: @Composable ColumnScope.(
             Column(modifier = Modifier.padding(24.dp), content = content)
         }
     }
+}
+
+@Suppress("DEPRECATION")
+fun copyToClipboard(
+    clipboardManager: ClipboardManager,
+    text: String,
+    onSuccess: () -> Unit
+) {
+    clipboardManager.setText(AnnotatedString(text))
+    onSuccess()
 }

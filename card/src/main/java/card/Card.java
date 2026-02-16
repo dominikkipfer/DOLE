@@ -282,10 +282,11 @@ public class Card extends Applet {
      */
     private void processGetStatus(APDU apdu) {
         byte[] buffer = apdu.getBuffer();
-        buffer[0] = isPinSet ? (byte) 0x01 : (byte) 0x00;
-        buffer[1] = genesisDone ? (byte) 0x01 : (byte) 0x00;
-        buffer[2] = ownerPin.getTriesRemaining();
-        apdu.setOutgoingAndSend((short)0, (short)3);
+        buffer[0] = isMinter ? (byte) 0x01 : (byte) 0x00;
+        buffer[1] = isPinSet ? (byte) 0x01 : (byte) 0x00;
+        buffer[2] = genesisDone ? (byte) 0x01 : (byte) 0x00;
+        buffer[3] = ownerPin.getTriesRemaining();
+        apdu.setOutgoingAndSend((short)0, (short)4);
     }
 
     /**

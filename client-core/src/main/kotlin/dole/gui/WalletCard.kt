@@ -54,6 +54,7 @@ fun WalletCard(
     edgeLabelPlacement: EdgeLabelPlacement = EdgeLabelPlacement.Bottom,
     rotateEdgeLabels: Boolean = false,
     onClick: (() -> Unit)? = null,
+    onIdClick: (() -> Unit)? = null,
     overlayContent: @Composable (BoxScope.() -> Unit)? = null
 ) {
     val baseColor = Color(0xFFF7F7F7)
@@ -133,7 +134,7 @@ fun WalletCard(
                 Box(modifier = Modifier.fillMaxSize()) {
                     if (showInlineLabels) {
                         CardName(account.name(), scaleFactor)
-                        CardId(account, showFullId, scaleFactor)
+                        CardId(account, showFullId, scaleFactor, onIdClick)
                     }
 
                     if (showEdgeLabels) {
@@ -299,7 +300,7 @@ fun BoxScope.CardName(name: String, scaleFactor: Float) {
 }
 
 @Composable
-fun BoxScope.CardId(account: StoredAccount, showFullId: Boolean, scaleFactor: Float) {
+fun BoxScope.CardId(account: StoredAccount, showFullId: Boolean, scaleFactor: Float, onIdClick: (() -> Unit)?) {
     val idText = if (showFullId) account.id() else "•••• ${account.id().takeLast(4)}"
     Text(
         text = idText,
@@ -307,7 +308,12 @@ fun BoxScope.CardId(account: StoredAccount, showFullId: Boolean, scaleFactor: Fl
         fontSize = 9.sp * scaleFactor,
         fontWeight = FontWeight.Medium,
         letterSpacing = 1.5.sp * scaleFactor,
-        modifier = Modifier.align(Alignment.BottomStart).padding(bottom = 18.dp * scaleFactor, start = 20.dp * scaleFactor)
+        modifier = Modifier
+            .align(Alignment.BottomStart)
+            .padding(bottom = 18.dp * scaleFactor, start = 20.dp * scaleFactor)
+            .then(if (onIdClick != null) Modifier.clickable(interactionSource = null, indication = null) {
+                onIdClick()
+            } else Modifier)
     )
 }
 

@@ -51,6 +51,19 @@ public class SettingsService {
         if (this.initialLedgerState != null) ledger.initialize(this.initialLedgerState);
     }
 
+    public boolean isMinter(String userId) {
+        return knownMinted.containsKey(userId);
+    }
+
+    public void setMinterStatus(String userId, boolean isMinter) {
+        if (isMinter) {
+            knownMinted.putIfAbsent(userId, 0);
+        } else {
+            knownMinted.remove(userId);
+        }
+        persist();
+    }
+
     public AccountState getInitialAccountState(String userId) {
         AccountState state = new AccountState();
         if (initialLedgerState != null && initialLedgerState.states.containsKey(userId)) {
@@ -62,7 +75,7 @@ public class SettingsService {
     }
 
     public void updateAccountState(String userId, int mintGoc, int burnGoc) {
-        knownMinted.merge(userId, mintGoc, Math::max);
+        if (mintGoc > 0 || knownMinted.containsKey(userId)) knownMinted.merge(userId, mintGoc, Math::max);
         knownBurned.merge(userId, burnGoc, Math::max);
     }
 
@@ -190,7 +203,13 @@ public class SettingsService {
                     int ledgerMint = (as != null) ? as.totalMinted : 0;
                     int ledgerBurn = (as != null) ? as.totalBurned : 0;
 
-                    data.totalMinted = Math.max(ledgerMint, knownMinted.getOrDefault(id, 0));
+                    if (knownMinted.containsKey(id)) {
+                        int known = knownMinted.get(id);
+                        data.totalMinted = Math.max(ledgerMint, known);
+                    } else {
+                        data.totalMinted = null;
+                    }
+
                     data.totalBurned = Math.max(ledgerBurn, knownBurned.getOrDefault(id, 0));
                 }
             });
@@ -221,13 +240,13 @@ public class SettingsService {
                 if (data.lastSentTx != null) lastSentTx.put(id, new ConcurrentHashMap<>(data.lastSentTx));
                 if (data.savedBalance != null) savedBalances.put(id, data.savedBalance);
 
-                if (data.totalMinted > 0) knownMinted.put(id, data.totalMinted);
+                if (data.totalMinted != null) knownMinted.put(id, data.totalMinted);
                 if (data.totalBurned > 0) knownBurned.put(id, data.totalBurned);
 
                 if (data.lastHash != null || data.publicKey != null) {
                     AccountState as = new AccountState();
                     as.lastSeq = data.lastSeq;
-                    as.totalMinted = data.totalMinted;
+                    as.totalMinted = (data.totalMinted != null) ? data.totalMinted : 0;
                     as.totalBurned = data.totalBurned;
                     initialLedgerState.states.put(id, as);
                     if (data.lastHash != null) initialLedgerState.hashes.put(id, data.lastHash);
@@ -249,7 +268,7 @@ public class SettingsService {
         String lastHash;
         String publicKey;
         int lastSeq = 0;
-        int totalMinted = 0;
+        Integer totalMinted;
         int totalBurned = 0;
     }
 }

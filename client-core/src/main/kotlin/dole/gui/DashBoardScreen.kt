@@ -12,6 +12,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,10 +37,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
@@ -91,6 +94,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -126,6 +130,17 @@ fun DashboardScreen(
 
     val backgroundColor = Color(0xFFF2F2F7)
 
+    @Suppress("DEPRECATION")
+    val clipboardManager = LocalClipboardManager.current
+
+    fun copyToClipboard(text: String) {
+        copyToClipboard(
+            clipboardManager = clipboardManager,
+            text = text,
+            onSuccess = { viewModel.showUserMessage("ID copied to clipboard") }
+        )
+    }
+
     BoxWithConstraints(modifier = Modifier.fillMaxSize().background(backgroundColor)) {
         val isWideLayout = maxWidth > maxHeight
         val activeId = viewModel.currentId
@@ -148,7 +163,9 @@ fun DashboardScreen(
                 screenHeight = screenHeight,
                 onSend = { showSendDialog = true },
                 onMint = { showMintDialog = true },
-                onBurn = { showBurnDialog = true }
+                onBurn = { showBurnDialog = true },
+                onCopyId = { viewModel.currentId?.let { copyToClipboard(it) } },
+                onCopyAny = { copyToClipboard(it) }
             )
         } else {
             PortraitDashboardLayout(
@@ -161,7 +178,9 @@ fun DashboardScreen(
                 animatedVisibilityScope = animatedVisibilityScope,
                 onSend = { showSendDialog = true },
                 onMint = { showMintDialog = true },
-                onBurn = { showBurnDialog = true }
+                onBurn = { showBurnDialog = true },
+                onCopyId = { viewModel.currentId?.let { copyToClipboard(it) } },
+                onCopyAny = { copyToClipboard(it) }
             )
         }
 
@@ -188,12 +207,21 @@ private fun WideDashboardLayout(
     screenHeight: Dp,
     onSend: () -> Unit,
     onMint: () -> Unit,
-    onBurn: () -> Unit
+    onBurn: () -> Unit,
+    onCopyId: () -> Unit,
+    onCopyAny: (String) -> Unit
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val leftColumnWidth = maxWidth * 0.45f
-        val slotWidth = (leftColumnWidth - 64.dp) / 5
-        val buttonSize = minOf(60.dp, slotWidth * 0.85f)
+        val isCompactHeight = maxHeight < 500.dp
+        val spacerHeight = if (isCompactHeight) 12.dp else 32.dp
+        val maxCardHeight = maxHeight * 0.45f
+        val maxCardWidthFromHeight = maxCardHeight * 1.586f
+
+        val leftColumnAvailableWidth = (maxWidth * 0.45f) - 64.dp
+        val finalCardWidth = minOf(leftColumnAvailableWidth, maxCardWidthFromHeight)
+        val slotWidth = leftColumnAvailableWidth / 5
+        val maxButtonHeight = maxHeight * 0.15f
+        val buttonSize = minOf(60.dp, slotWidth * 0.85f, maxButtonHeight)
 
         Row(modifier = Modifier.fillMaxSize()) {
             Box(
@@ -203,24 +231,30 @@ private fun WideDashboardLayout(
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.width(finalCardWidth).verticalScroll(rememberScrollState())
                 ) {
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        SharedWalletCard(currentAccount, viewModel.isCardConnected, sharedTransitionScope, animatedVisibilityScope, true)
+                    Box(modifier = Modifier.width(finalCardWidth)) {
+                        SharedWalletCard(
+                            currentAccount,
+                            viewModel.isCardConnected,
+                            sharedTransitionScope,
+                            animatedVisibilityScope,
+                            true,
+                            onIdClick = onCopyId
+                        )
                     }
-                    Spacer(Modifier.height(32.dp))
+                    Spacer(Modifier.height(spacerHeight))
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("Card Balance", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
 
                         Text(
                             "DM ${viewModel.balance}",
-                            style = MaterialTheme.typography.headlineLarge,
+                            style = if (isCompactHeight) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.headlineLarge,
                             fontWeight = FontWeight.Bold,
                             color = Color.Black.copy(alpha = if (viewModel.isBalancePending) 0.5f else 1.0f)
                         )
                     }
-                    Spacer(Modifier.height(32.dp))
-
+                    Spacer(Modifier.height(spacerHeight))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -228,6 +262,7 @@ private fun WideDashboardLayout(
                     ) {
                         TransactionActionButtons(
                             buttonSize = buttonSize,
+                            isMinter = viewModel.isMinter,
                             onSend = onSend,
                             onMint = onMint,
                             onBurn = onBurn,
@@ -246,7 +281,8 @@ private fun WideDashboardLayout(
                     topPadding = null,
                     minHeaderHeight = 0.dp,
                     screenHeight = screenHeight,
-                    isWideLayout = true
+                    isWideLayout = true,
+                    onCopy = onCopyAny
                 )
             }
         }
@@ -265,10 +301,13 @@ private fun PortraitDashboardLayout(
     animatedVisibilityScope: AnimatedVisibilityScope,
     onSend: () -> Unit,
     onMint: () -> Unit,
-    onBurn: () -> Unit
+    onBurn: () -> Unit,
+    onCopyId: () -> Unit,
+    onCopyAny: (String) -> Unit
 ) {
     val density = LocalDensity.current
     val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
 
     val cardHeightExpanded = maxWidth / 1.586f
     val horizontalPadding = 24.dp
@@ -292,6 +331,12 @@ private fun PortraitDashboardLayout(
     val isDragged by listState.interactionSource.collectIsDraggedAsState()
     var isSnapping by remember { mutableStateOf(false) }
     val animationRange = scrollRange * 0.9f
+
+    val isAtTop by remember {
+        derivedStateOf {
+            listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0
+        }
+    }
 
     LaunchedEffect(listState, scrollRange) {
         snapshotFlow { listState.isScrollInProgress || isDragged || isSnapping }
@@ -329,7 +374,8 @@ private fun PortraitDashboardLayout(
         topPadding = listSpacerHeight,
         minHeaderHeight = scrollLimitHeaderHeight,
         screenHeight = screenHeight,
-        isWideLayout = false
+        isWideLayout = false,
+        onCopy = onCopyAny
     )
 
     Box(modifier = Modifier.fillMaxWidth().height(effectiveMaxHeaderHeight).zIndex(1f)) {
@@ -351,7 +397,17 @@ private fun PortraitDashboardLayout(
         val showFullId = collapseFactor < 0.5f
 
         Box(modifier = Modifier.offset(x = currentCardX, y = currentCardY).width(currentCardWidth).zIndex(2f)) {
-            SharedWalletCard(currentAccount, viewModel.isCardConnected, sharedTransitionScope, animatedVisibilityScope, showFullId)
+            SharedWalletCard(
+                account = currentAccount,
+                isOnline = viewModel.isCardConnected,
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
+                showFullId = showFullId,
+                onClick = if (isAtTop) null else {
+                    { coroutineScope.launch { listState.animateScrollToItem(0) } }
+                },
+                onIdClick = onCopyId
+            )
         }
 
         val balanceYExpanded = cardTopPad + cardHeightExpanded + balanceTopPad
@@ -401,6 +457,7 @@ private fun PortraitDashboardLayout(
                 ) {
                     TransactionActionButtons(
                         buttonSize = buttonSize,
+                        isMinter = viewModel.isMinter,
                         onSend = onSend,
                         onMint = onMint,
                         onBurn = onBurn,
@@ -411,8 +468,7 @@ private fun PortraitDashboardLayout(
             }
         }
 
-        val logoutSlotCenter = horizontalPadding + (slotWidth * 4) + (slotWidth / 2)
-        val logoutStartX = logoutSlotCenter - (buttonSize / 2) + 16.dp
+        val logoutStartX = maxWidth - horizontalPadding - buttonSize
         val logoutEndX = maxWidth - 56.dp
         val animationProgress = collapseFactor
 
@@ -456,7 +512,8 @@ fun TransactionDashboardList(
     topPadding: Dp?,
     minHeaderHeight: Dp,
     screenHeight: Dp,
-    isWideLayout: Boolean
+    isWideLayout: Boolean,
+    onCopy: (String) -> Unit
 ) {
     val density = LocalDensity.current
     val coroutineScope = rememberCoroutineScope()
@@ -504,11 +561,18 @@ fun TransactionDashboardList(
     }
 
     val contentPad = if (topPadding != null) PaddingValues(bottom = bottomPad) else PaddingValues(top = 0.dp, bottom = 32.dp)
-    val sessionList = viewModel.sessionTransactions
-    val searchList = viewModel.filteredHistory
+
+    val sessionList = viewModel.sessionTransactions.distinctBy { it.tx.id() }
+    val searchList = remember(viewModel.filteredHistory) {
+        viewModel.filteredHistory.distinctBy { it.tx.id() }
+    }
+    val safeUnsyncedTxs = remember(unsyncedTxs) {
+        unsyncedTxs.distinctBy { it.tx.id() }
+    }
+
     val myId = viewModel.currentId ?: ""
     val isSearchMode = viewModel.isSearchMode
-    val hasPending = pendingActions.isNotEmpty() || unsyncedTxs.isNotEmpty()
+    val hasPending = pendingActions.isNotEmpty() || safeUnsyncedTxs.isNotEmpty()
 
     LazyColumn(
         state = listState,
@@ -584,27 +648,38 @@ fun TransactionDashboardList(
             } else {
                 items(searchList, key = { "search-${it.tx.id()}" }) { item ->
                     Box(Modifier.padding(horizontal = 16.dp)) {
-                        TransactionRow(item, myId, isPending = item.isUnsynced)
+                        TransactionRow(item, myId, isPending = item.isUnsynced, onCopy = onCopy, nameResolver = viewModel::getPeerName)
                     }
                 }
             }
         } else {
             if (hasPending) {
                 item { Text("Pending", style = MaterialTheme.typography.titleMedium, color = Color.Gray, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
-                items(pendingActions, key = { "pending-${it.id}" }) { action -> Box(Modifier.padding(horizontal = 16.dp)) { LocalPendingRow(action) } }
-                items(unsyncedTxs, key = { "unsynced-${it.tx.id()}" }) { item -> Box(Modifier.padding(horizontal = 16.dp)) { TransactionRow(item, myId, isPending = true) } }
+                items(pendingActions, key = { "pending-${it.id}" }) { action ->
+                    Box(Modifier.padding(horizontal = 16.dp)) {
+                        LocalPendingRow(action, onCopy = onCopy, nameResolver = viewModel::getPeerName)
+                    }
+                }
+                items(safeUnsyncedTxs, key = { "unsynced-${it.tx.id()}" }) { item ->
+                    Box(Modifier.padding(horizontal = 16.dp)) {
+                        TransactionRow(item, myId, isPending = true, onCopy = onCopy, nameResolver = viewModel::getPeerName)
+                    }
+                }
                 item { Spacer(Modifier.height(16.dp)) }
             }
             if (sessionList.isNotEmpty()) {
-                items(sessionList, key = { "session-${it.tx.id()}" }) { item -> Box(Modifier.padding(horizontal = 16.dp)) { TransactionRow(item, myId, isPending = false) } }
+                items(sessionList, key = { "session-${it.tx.id()}" }) { item ->
+                    Box(Modifier.padding(horizontal = 16.dp)) {
+                        TransactionRow(item, myId, isPending = false, onCopy = onCopy, nameResolver = viewModel::getPeerName)
+                    }
+                }
             } else if (!hasPending) {
                 item {
                     Box(modifier = Modifier.fillMaxWidth().padding(top = 48.dp), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(Icons.Default.CheckCircle, "Done", tint = Color.Green, modifier = Modifier.size(64.dp).alpha(0.5f))
                             Spacer(Modifier.height(16.dp))
-                            Text("Session is empty", style = MaterialTheme.typography.titleMedium, color = Color.Gray)
-                            Text("New transactions will appear here.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            Text("Up To Date", style = MaterialTheme.typography.titleMedium, color = Color.Gray)
                         }
                     }
                 }
@@ -622,7 +697,9 @@ private fun SharedWalletCard(
     isOnline: Boolean,
     sharedTransitionScope: SharedTransitionScope,
     animatedVisibilityScope: AnimatedVisibilityScope,
-    showFullId: Boolean
+    showFullId: Boolean,
+    onClick: (() -> Unit)? = null,
+    onIdClick: (() -> Unit)? = null
 ) {
     if (account != null) {
         with(sharedTransitionScope) {
@@ -630,7 +707,8 @@ private fun SharedWalletCard(
                 account = account,
                 isOnline = isOnline,
                 showFullId = showFullId,
-                onClick = null,
+                onClick = onClick,
+                onIdClick = onIdClick,
                 modifier = Modifier.fillMaxWidth().sharedBounds(
                     sharedContentState = rememberSharedContentState(key = "card-${account.id()}"),
                     animatedVisibilityScope = animatedVisibilityScope,
@@ -654,11 +732,13 @@ private fun DashboardDialogs(
     onDismissBurn: () -> Unit
 ) {
     val currentBalance = viewModel.balance
+    val ownId = viewModel.currentId ?: ""
 
     if (showSend) {
         SendOverlay(
             peers = viewModel.knownNetworkPeers,
             currentBalance = currentBalance,
+            ownId = ownId,
             screenHeight = screenHeight,
             onDismiss = onDismissSend,
             onConfirm = { targetId, amount -> viewModel.send(targetId, amount); onDismissSend() }
@@ -910,7 +990,7 @@ fun ModernActionSheet(
 }
 
 @Composable
-fun SendOverlay(peers: List<PeerOption>, currentBalance: Int, screenHeight: Dp, onDismiss: () -> Unit, onConfirm: (String, Int) -> Unit) {
+fun SendOverlay(peers: List<PeerOption>, currentBalance: Int, ownId: String, screenHeight: Dp, onDismiss: () -> Unit, onConfirm: (String, Int) -> Unit) {
     var amountText by remember { mutableStateOf("") }
     var receiverInput by remember { mutableStateOf("") }
 
@@ -922,6 +1002,7 @@ fun SendOverlay(peers: List<PeerOption>, currentBalance: Int, screenHeight: Dp, 
     }
 
     val isAmountValid = amountInt != null && amountInt > 0 && amountInt <= currentBalance
+    val isSelf = resolvedTargetId == ownId
     val isReceiverValid = resolvedTargetId != null
 
     ModernActionSheet(
@@ -929,16 +1010,15 @@ fun SendOverlay(peers: List<PeerOption>, currentBalance: Int, screenHeight: Dp, 
         onDismissRequest = onDismiss,
         confirmText = "Send",
         onConfirm = {
-            if (resolvedTargetId != null && amountInt != null) {
-                onConfirm(resolvedTargetId, amountInt)
-            }
-        },
+            if (resolvedTargetId != null && amountInt != null && !isSelf) onConfirm(resolvedTargetId, amountInt)
+                    },
         isConfirmEnabled = isAmountValid && isReceiverValid
     ) {
         CleanAmountInput(
             value = amountText,
             onValueChange = { amountText = it },
-            isError = amountInt != null && amountInt > currentBalance
+            isError = amountInt != null && amountInt > currentBalance,
+            maxInputLimit = currentBalance.toLong()
         )
 
         Spacer(modifier = Modifier.height(32.dp))
@@ -1110,7 +1190,7 @@ fun SortIndicator(label: String, isActive: Boolean, isAscending: Boolean, onClic
 fun TypeFilterDropdown(viewModel: WalletViewModel, containerColor: Color = Color(0xFFF2F2F7)) {
     var isExpanded by remember { mutableStateOf(false) }
     val selectedTypes = viewModel.filterTypes
-    val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val interactionSource = remember { MutableInteractionSource() }
 
     fun getIconData(type: TxFilterType): Pair<ImageVector, Color> {
         return when (type) {
@@ -1121,7 +1201,13 @@ fun TypeFilterDropdown(viewModel: WalletViewModel, containerColor: Color = Color
         }
     }
 
-    Box(modifier = Modifier.width(120.dp)) {
+    val availableTypes = if (viewModel.isMinter) {
+        TxFilterType.entries
+    } else {
+        TxFilterType.entries.filter { it != TxFilterType.MINT }
+    }
+
+    Box(modifier = Modifier.width(110.dp)) {
         TextField(
             value = " ",
             onValueChange = {},
@@ -1168,7 +1254,7 @@ fun TypeFilterDropdown(viewModel: WalletViewModel, containerColor: Color = Color
         )
 
         DropdownMenu(expanded = isExpanded, onDismissRequest = { isExpanded = false }, modifier = Modifier.background(Color.White)) {
-            TxFilterType.entries.forEach { type ->
+            availableTypes.forEach { type ->
                 val (icon, color) = getIconData(type)
                 DropdownMenuItem(
                     text = {
@@ -1231,13 +1317,14 @@ fun FrontEllipsizedText(text: String, style: androidx.compose.ui.text.TextStyle,
 @Composable
 private fun TransactionActionButtons(
     buttonSize: Dp,
+    isMinter: Boolean,
     onSend: () -> Unit,
     onMint: () -> Unit,
     onBurn: () -> Unit,
     onSettings: () -> Unit
 ) {
     ActionButton("Send", Icons.AutoMirrored.Filled.Send, Color(0xFF007AFF), buttonSize, onClick = onSend)
-    ActionButton("Mint", Icons.Default.Add, Color.Green, buttonSize, onClick = onMint)
+    if (isMinter) ActionButton("Mint", Icons.Default.Add, Color.Green, buttonSize, onClick = onMint)
     ActionButton("Burn", Icons.Default.Remove, Color.Red, buttonSize, onClick = onBurn)
     ActionButton("Settings", Icons.Default.Settings, Color.Gray, buttonSize, onClick = onSettings)
 }
@@ -1272,7 +1359,7 @@ fun ActionButton(
 }
 
 @Composable
-fun LocalPendingRow(action: PendingAction) {
+fun LocalPendingRow(action: PendingAction, onCopy: (String) -> Unit, nameResolver: (String) -> String?) {
     val title = when (action.type) {
         "SEND" -> "Send"
         "MINT" -> "Mint"
@@ -1294,9 +1381,24 @@ fun LocalPendingRow(action: PendingAction) {
             Column(Modifier.weight(1f)) {
                 Text(title, fontWeight = FontWeight.Bold)
                 if (action.targetId != null) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    val savedName = nameResolver(action.targetId)
+                    val textToShow = savedName ?: action.targetId
+                    val interactionSource = remember { MutableInteractionSource() }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable(
+                            interactionSource = interactionSource,
+                            indication = null
+                        ) { onCopy(action.targetId) }
+                    ) {
                         Text("To ", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                        FrontEllipsizedText(text = action.targetId, style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.fillMaxWidth())
+                        FrontEllipsizedText(
+                            text = textToShow,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
             }
@@ -1306,7 +1408,7 @@ fun LocalPendingRow(action: PendingAction) {
 }
 
 @Composable
-fun TransactionRow(item: DisplayTransaction, myId: String, isPending: Boolean) {
+fun TransactionRow(item: DisplayTransaction, myId: String, isPending: Boolean, onCopy: (String) -> Unit, nameResolver: (String) -> String?) {
     val tx = item.tx
     val isMe = tx.author() == myId
     val isGenesis = tx is GenesisTransaction
@@ -1348,10 +1450,25 @@ fun TransactionRow(item: DisplayTransaction, myId: String, isPending: Boolean) {
                 Text(title, fontWeight = FontWeight.Bold)
                 if (tx !is MintTransaction && tx !is BurnTransaction) {
                     val prefixLabel = if (tx is SendTransaction && !isIncoming) "To " else "From "
-                    val idString = if (tx is SendTransaction && !isIncoming) (tx.target ?: "?") else tx.author()
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    val rawId = if (tx is SendTransaction && !isIncoming) (tx.target ?: "?") else tx.author()
+                    val savedName = nameResolver(rawId)
+                    val textToShow = savedName ?: rawId
+                    val interactionSource = remember { MutableInteractionSource() }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable(
+                            interactionSource = interactionSource,
+                            indication = null
+                        ) { onCopy(rawId) }
+                    ) {
                         Text(prefixLabel, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                        FrontEllipsizedText(text = idString, style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.fillMaxWidth())
+                        FrontEllipsizedText(
+                            text = textToShow,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
             }

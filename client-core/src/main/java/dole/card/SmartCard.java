@@ -5,6 +5,7 @@ public interface SmartCard {
     void disconnect();
 
     default boolean isConnected() { return false; }
+    boolean isMinter() throws Exception;
     boolean isPinSet() throws Exception;
     boolean isGenesisDone() throws Exception;
     int getPinRetries() throws Exception;

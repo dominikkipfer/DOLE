@@ -159,21 +159,27 @@ public class AndroidSmartCard implements SmartCard {
     }
 
     @Override
-    public boolean isPinSet() throws Exception {
+    public boolean isMinter() throws Exception {
         byte[] data = transmit(Constants.OP_GET_STATUS, null);
         return data.length > 0 && data[0] == (byte) 0x01;
     }
 
     @Override
-    public boolean isGenesisDone() throws Exception {
+    public boolean isPinSet() throws Exception {
         byte[] data = transmit(Constants.OP_GET_STATUS, null);
         return data.length > 1 && data[1] == (byte) 0x01;
     }
 
     @Override
+    public boolean isGenesisDone() throws Exception {
+        byte[] data = transmit(Constants.OP_GET_STATUS, null);
+        return data.length > 2 && data[2] == (byte) 0x01;
+    }
+
+    @Override
     public int getPinRetries() throws Exception {
         byte[] data = transmit(Constants.OP_GET_STATUS, null);
-        if (data.length > 2) return data[2];
+        if (data.length > 3) return data[3];
         return 3;
     }
 }

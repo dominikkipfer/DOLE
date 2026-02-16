@@ -71,6 +71,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun WalletApp(viewModel: WalletViewModel) {
     val errorMessage = viewModel.errorMessage
+    val userMessage = viewModel.userMessage
 
     val isPinError = errorMessage?.contains("PIN", ignoreCase = true) == true ||
             errorMessage?.contains("Verification failed", ignoreCase = true) == true ||
@@ -91,6 +92,16 @@ fun WalletApp(viewModel: WalletViewModel) {
             scope.launch {
                 snackbarHostState.currentSnackbarData?.dismiss()
                 snackbarHostState.showSnackbar(message = errorMessage)
+            }
+        }
+    }
+
+    LaunchedEffect(userMessage) {
+        if (userMessage != null) {
+            scope.launch {
+                snackbarHostState.currentSnackbarData?.dismiss()
+                snackbarHostState.showSnackbar(message = userMessage)
+                viewModel.dismissUserMessage()
             }
         }
     }

@@ -50,6 +50,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
@@ -75,6 +76,8 @@ fun SettingsScreen(
     var pinInput by remember { mutableStateOf("") }
     var firstPin by remember { mutableStateOf<String?>(null) }
 
+    @Suppress("DEPRECATION")
+    val clipboardManager = LocalClipboardManager.current
     var isError by remember { mutableStateOf(false) }
     val shakeOffset = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
@@ -146,16 +149,10 @@ fun SettingsScreen(
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyUp && event.key == Key.Escape) {
                     if (!isLoading) {
-                        if (step == SettingsStep.MENU) {
-                            onBack()
-                        } else if (step != SettingsStep.SUCCESS) {
-                            resetToMenu()
-                        }
+                        if (step == SettingsStep.MENU) onBack() else if (step != SettingsStep.SUCCESS) resetToMenu()
                     }
                     true
-                } else {
-                    false
-                }
+                } else false
             }
             .pinInputHandler(
                 focusRequester = focusRequester,
@@ -205,6 +202,15 @@ fun SettingsScreen(
                                     modifier = Modifier.fillMaxWidth(),
                                     isOnline = viewModel.isCardConnected,
                                     showFullId = true,
+                                    onIdClick = {
+                                        viewModel.currentId?.let { id ->
+                                            copyToClipboard(
+                                                clipboardManager = clipboardManager,
+                                                text = id,
+                                                onSuccess = { viewModel.showUserMessage("ID copied to clipboard") }
+                                            )
+                                        }
+                                    },
                                     overlayContent = if (showOverlay) {
                                         {
                                             if (step == SettingsStep.SUCCESS) {
