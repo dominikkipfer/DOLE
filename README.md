@@ -6,7 +6,7 @@ This project was developed as part of the "New Trends for Local and Global Inter
 
 ## Theoretical Foundation
 
-The system is built upon the theoretical framework of the **GOC-Ledger**, proposed by Eric Lavoie. It utilizes **Grow-Only Counters (GOCs)** to track value transfers, ensuring that ledger states can mathematically converge through Strong Eventual Consistency without the need for a global consensus mechanism. DOLE extends this model by using certified hardware to locally enforce protocol rules, ensuring system integrity and preventing overspending or history forking.
+The system is built upon the theoretical framework of the **GOC-Ledger**, proposed by Erick Lavoie. It utilizes **Grow-Only Counters (GOCs)** to track value transfers, ensuring that ledger states can mathematically converge through Strong Eventual Consistency without the need for a global consensus mechanism. DOLE extends this model by using certified hardware to locally enforce protocol rules, ensuring system integrity and preventing overspending or history forking.
 
 ## Key Features
 
