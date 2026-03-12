@@ -94,4 +94,4 @@ target/
 # Logs and Keys
 # --------------------
 local.properties
-.jks
+*.jks
