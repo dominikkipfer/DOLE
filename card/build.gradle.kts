@@ -1,3 +1,7 @@
+import java.net.URI
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+
 plugins {
     java
 }
@@ -25,29 +29,41 @@ java {
 }
 
 val downloadAntJar by tasks.registering {
-    outputs.file(antJar)
+    val dest = antJar
+    val url = antJavacardUrl
+    outputs.file(dest)
     doLast {
-        val f = antJar.get().asFile
-        mkdir(f.parentFile)
-        ant.withGroovyBuilder { "get"("src" to antJavacardUrl, "dest" to f) }
+        val f = dest.get().asFile
+        f.parentFile.mkdirs()
+        URI.create(url).toURL().openStream().use { input ->
+            Files.copy(input, f.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
     }
 }
 
 val downloadGpJar by tasks.registering {
-    outputs.file(gpJar)
+    val dest = gpJar
+    val url = gpUrl
+    outputs.file(dest)
     doLast {
-        val f = gpJar.get().asFile
-        mkdir(f.parentFile)
-        ant.withGroovyBuilder { "get"("src" to gpUrl, "dest" to f, "verbose" to "true") }
+        val f = dest.get().asFile
+        f.parentFile.mkdirs()
+        URI.create(url).toURL().openStream().use { input ->
+            Files.copy(input, f.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
     }
 }
 
 val downloadSdk by tasks.registering {
-    outputs.file(sdkZip)
+    val dest = sdkZip
+    val url = sdkUrl
+    outputs.file(dest)
     doLast {
-        val f = sdkZip.get().asFile
-        mkdir(f.parentFile)
-        ant.withGroovyBuilder { "get"("src" to sdkUrl, "dest" to f) }
+        val f = dest.get().asFile
+        f.parentFile.mkdirs()
+        URI.create(url).toURL().openStream().use { input ->
+            Files.copy(input, f.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
     }
 }
 
@@ -96,21 +112,36 @@ val buildApplet by tasks.registering {
     val capFile = layout.buildDirectory.file("card.cap")
     outputs.file(capFile)
 
-    doLast {
-        val sdkPath = sdkRoot.get().dir("jc320v25.1_kit").asFile.absolutePath
-        val antJarPath = antJar.get().asFile.absolutePath
+    val localSdkDir = sdkRoot.map { it.dir("jc320v25.1_kit").asFile.absolutePath }
+    val localAntJar = antJar.map { it.asFile.absolutePath }
+    val localCapFile = capFile.map { it.asFile.absolutePath }
+    val localClassesDir = layout.buildDirectory.dir("classes").map { it.asFile.absolutePath }
 
-        ant.withGroovyBuilder {
+    val localPkgAid = pkgAid
+    val localAppletAid = appletAid
+    val localSources = "${project.projectDir}/src/main/java;${project(":common").projectDir}/src/main/java"
+
+    doLast {
+        val sdkPath = localSdkDir.get()
+        val antJarPath = localAntJar.get()
+        val capPath = localCapFile.get()
+        val classesPath = localClassesDir.get()
+
+        File(classesPath).mkdirs()
+
+        this.ant.withGroovyBuilder {
             "taskdef"("name" to "javacard", "classname" to "pro.javacard.ant.JavaCard", "classpath" to antJarPath)
 
-            mkdir(layout.buildDirectory.dir("classes"))
-
             "javacard"("jckit" to sdkPath) {
-                "cap"("targetsdk" to "3.0.5", "aid" to pkgAid, "version" to "0.1",
-                    "output" to capFile.get().asFile.absolutePath,
-                    "sources" to "${project.projectDir}/src/main/java;${project(":common").projectDir}/src/main/java",
-                    "classes" to layout.buildDirectory.dir("classes").get().asFile.absolutePath) {
-                    "applet"("class" to "card.Card", "aid" to appletAid)
+                "cap"(
+                    "targetsdk" to "3.0.5",
+                    "aid" to localPkgAid,
+                    "version" to "0.1",
+                    "output" to capPath,
+                    "sources" to localSources,
+                    "classes" to classesPath
+                ) {
+                    "applet"("class" to "card.Card", "aid" to localAppletAid)
                 }
             }
         }
@@ -125,19 +156,24 @@ tasks.named("assemble") {
 mapOf("Minter" to true, "User" to false).forEach { (type, isMinter) ->
 
     val installTask = tasks.register<Exec>("install$type") {
-
         dependsOn(buildApplet)
 
-        val capPath = layout.buildDirectory.file("card.cap").get().asFile.absolutePath
-        val gpPath = gpJar.get().asFile.absolutePath
+        val capFileProvider = layout.buildDirectory.file("card.cap")
+        val gpJarProvider = gpJar
         val params = if (isMinter) "C90101" else "C90100"
 
-        commandLine("java", "-jar", gpPath,
-            "-force",
-            "-install", capPath,
-            "-params", params,
-            "-default",
-            "-verbose")
+        executable = "java"
+
+        argumentProviders.add(CommandLineArgumentProvider {
+            listOf(
+                "-jar", gpJarProvider.get().asFile.absolutePath,
+                "-force",
+                "-install", capFileProvider.get().asFile.absolutePath,
+                "-params", params,
+                "-default",
+                "-verbose"
+            )
+        })
     }
 
     tasks.register<JavaExec>("setup$type") {
