@@ -23,8 +23,11 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: 21
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+        shell: bash
       - name: Build CAP Applet
-        run: ./gradlew :card:build
+        run: ./gradlew :card:buildApplet
       - name: Upload CAP Artifact
         uses: actions/upload-artifact@v7
         with:
@@ -49,6 +52,9 @@ jobs:
           targets: aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
       - name: Install BoltFFI
         run: cargo install boltffi-cli
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+        shell: bash
       - name: Build Release APK
         run: ./gradlew :app:androidApp:assembleRelease
       - name: Upload Android Artifact
@@ -62,6 +68,7 @@ jobs:
     name: Build Desktop (${{ matrix.os_name }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -84,6 +91,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Install BoltFFI
         run: cargo install boltffi-cli
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+        shell: bash
       - name: Build Desktop Distribution
         run: ./gradlew :app:desktopApp:packageReleaseDistributionForCurrentOS
       - name: Upload Desktop Artifact
@@ -115,6 +125,9 @@ jobs:
           targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
       - name: Install BoltFFI
         run: cargo install boltffi-cli
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+        shell: bash
       - name: Build iOS XCFramework
         run: ./gradlew :app:shared:assembleXCFramework
       - name: Upload iOS Framework
@@ -128,6 +141,7 @@ jobs:
     name: Create/Update Internal Draft Release
     needs: [ build-card, build-android, build-desktop, build-ios ]
     runs-on: ubuntu-latest
+    if: always()
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v8
