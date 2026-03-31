@@ -1,15 +1,15 @@
 @file:Suppress("UnstableApiUsage")
 
+rootProject.name = "DOLE"
+
+enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
+
 pluginManagement {
     repositories {
         google()
-        mavenCentral()
         gradlePluginPortal()
+        mavenCentral()
     }
-}
-
-plugins {
-    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
 }
 
 dependencyResolutionManagement {
@@ -20,8 +20,16 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "DOLE"
+plugins {
+    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
+}
+
+val isJetBrains = System.getProperty("idea.vendor.name") == "JetBrains"
 
 include(":common")
+
 include(":card")
-include(":composeApp")
+
+include(":app:shared")
+include(":app:desktopApp")
+if (!isJetBrains) include(":app:androidApp")

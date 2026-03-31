@@ -2,7 +2,9 @@ plugins {
     `java-library`
 }
 
+val jdkVersion = libs.versions.javaCard.get().toInt()
+
 java {
-    sourceCompatibility = JavaVersion.VERSION_1_8
-    targetCompatibility = JavaVersion.VERSION_1_8
+    sourceCompatibility = JavaVersion.toVersion(jdkVersion)
+    targetCompatibility = JavaVersion.toVersion(jdkVersion)
 }

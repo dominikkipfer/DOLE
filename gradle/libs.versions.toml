@@ -1,71 +1,59 @@
 [versions]
-# --- Core & Build ---
-kotlin                     = "2.3.10"
-agp                        = "8.13.2"
+kotlin                     = "2.3.20"
+java                       = "21"
+javaCard                   = "8"
+agp                        = "9.1.0"
+android-compile-sdk        = "36"
+android-min-sdk            = "26"
 
-# --- Compose Multiplatform ---
-composePlugin              = "1.10.2"
-componentsResources        = "1.10.2"
-foundation                 = "1.10.2"
-runtime                    = "1.10.2"
-ui                         = "1.10.2"
+composePlugin              = "1.10.3"
+componentsResources        = "1.10.3"
+foundation                 = "1.10.3"
+runtime                    = "1.10.3"
+ui                         = "1.10.3"
 material3Version           = "1.9.0"
 materialIconsExtended      = "1.7.3"
 
-# --- KotlinX ---
 coroutines                 = "1.10.2"
 kotlinxSerialization       = "1.10.0"
 
-# --- Android ---
 coreKtx                    = "1.18.0"
 activityCompose            = "1.13.0"
 
-# --- Ditto (P2P Sync) ---
-dittoKotlin                = "5.1.0-experimental-release-gate.3"
-dittoBinaries              = "5.1.0-experimental-release-gate.4"
-
-# --- Utilities ---
 multiplatformSettings      = "1.3.0"
+metro                      = "0.12.0"
+aboutlibraries             = "13.2.1"
 
 
 [libraries]
-# --- Compose Multiplatform ---
 runtime                    = { module = "org.jetbrains.compose.runtime:runtime", version.ref = "runtime" }
 foundation                 = { module = "org.jetbrains.compose.foundation:foundation", version.ref = "foundation" }
 ui                         = { module = "org.jetbrains.compose.ui:ui", version.ref = "ui" }
 components-resources       = { module = "org.jetbrains.compose.components:components-resources", version.ref = "componentsResources" }
 
-# --- Material UI ---
 material3                  = { module = "org.jetbrains.compose.material3:material3", version.ref = "material3Version" }
 material-icons-extended    = { module = "org.jetbrains.compose.material:material-icons-extended", version.ref = "materialIconsExtended" }
 
-# --- KotlinX ---
 kotlinx-coroutines-swing   = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 
-# --- Android Specific ---
 androidx-core-ktx          = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-activity-compose  = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 
-# --- Ditto (P2P Sync) ---
-ditto-kotlin               = { module = "com.ditto:ditto-kotlin", version.ref = "dittoKotlin" }
-ditto-binaries             = { module = "com.ditto:ditto-binaries", version.ref = "dittoBinaries" }
-
-# --- Utilities ---
 multiplatform-settings     = { module = "com.russhwolf:multiplatform-settings-no-arg", version.ref = "multiplatformSettings" }
 
 
 [plugins]
-# --- Kotlin ---
-kotlin-multiplatform       = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlin-jvm                 = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
-kotlin-android             = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-parcelize           = { id = "org.jetbrains.kotlin.plugin.parcelize", version.ref = "kotlin" }
+kotlin-multiplatform       = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlin-serialization       = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 
-# --- Compose ---
-jetbrains-compose          = { id = "org.jetbrains.compose", version.ref = "composePlugin" }
-kotlin-compose             = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+compose                    = { id = "org.jetbrains.compose", version.ref = "composePlugin" }
+kotlin-plugin-compose      = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 
-# --- Android ---
 android-application        = { id = "com.android.application", version.ref = "agp" }
-android-library            = { id = "com.android.library", version.ref = "agp" }
+android-kmp-library        = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
+
+about-libraries            = { id = "com.mikepenz.aboutlibraries.plugin", version.ref = "aboutlibraries" }
+metro                      = { id = "dev.zacsweers.metro", version.ref = "metro" }

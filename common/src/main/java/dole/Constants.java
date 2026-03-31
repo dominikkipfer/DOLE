@@ -6,17 +6,6 @@ public final class Constants {
         throw new UnsupportedOperationException("Utility class");
     }
 
-    // Ditto
-    public static final String DITTO_APP_ID = "39f7863f-9751-4b9c-be12-433716726ab7";
-    public static final String DITTO_PLAYGROUND_TOKEN = "abcca39a-4199-46a7-ba6a-1f13e64f9ca4";
-    public static final String DITTO_AUTH_URL = "https://i83inp.cloud.dittolive.app";
-    public static final String DITTO_WEBSOCKET_URL = "wss://i83inp.cloud.dittolive.app";
-
-
-    // --- FILESYSTEM ---
-    public static final String COLLECTION = "wallet_logs";
-    public static final String FILE_WALLET_DATA = "wallet_data.json";
-
     // --- ERROR MESSAGES ---
     public static final String ERR_CARD_NOT_FOUND = "No card found. Please insert your smart card.";
     public static final String ERR_PIN_INVALID = "Invalid PIN. Please try again.";

@@ -1,0 +1,152 @@
+name: Build DOLE Apps
+on:
+  push:
+    branches:
+      - git-ledger
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-card:
+    name: Build SmartCard (.cap)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'zulu'
+          java-version: 21
+      - name: Build CAP Applet
+        run: ./gradlew :card:build
+      - name: Upload CAP Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: SmartCard-Applet
+          path: card/build/libs/*.cap
+          retention-days: 14
+
+  build-android:
+    name: Build Android (APK/AAB)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'zulu'
+          java-version: 21
+      - name: Install Rust for Android
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
+      - name: Install BoltFFI
+        run: cargo install boltffi-cli
+      - name: Build Release APK
+        run: ./gradlew :app:androidApp:assembleRelease
+      - name: Upload Android Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Android-APK
+          path: app/androidApp/build/outputs/apk/release/*.apk
+          retention-days: 14
+
+  build-desktop:
+    name: Build Desktop (${{ matrix.os_name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            os_name: Linux (x64)
+          - os: windows-latest
+            os_name: Windows (x64)
+          - os: macos-latest
+            os_name: macOS (ARM64)
+          - os: macos-13
+            os_name: macOS (Intel)
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'zulu'
+          java-version: 21
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install BoltFFI
+        run: cargo install boltffi-cli
+      - name: Build Desktop Distribution
+        run: ./gradlew :app:desktopApp:packageReleaseDistributionForCurrentOS
+      - name: Upload Desktop Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Desktop-${{ matrix.os_name }}
+          path: |
+            app/desktopApp/build/compose/binaries/main/app/*
+            app/desktopApp/build/compose/binaries/main/dmg/*
+            app/desktopApp/build/compose/binaries/main/deb/*
+            app/desktopApp/build/compose/binaries/main/msi/*
+            app/desktopApp/build/compose/binaries/main/exe/*
+          retention-days: 14
+
+  build-ios:
+    name: Build iOS (Framework)
+    runs-on: macos-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'zulu'
+          java-version: 21
+      - name: Install Rust for iOS
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
+      - name: Install BoltFFI
+        run: cargo install boltffi-cli
+      - name: Build iOS XCFramework
+        run: ./gradlew :app:shared:assembleXCFramework
+      - name: Upload iOS Framework
+        uses: actions/upload-artifact@v7
+        with:
+          name: iOS-XCFramework
+          path: app/shared/build/XCFrameworks/
+          retention-days: 14
+
+  create-draft-release:
+    name: Create/Update Internal Draft Release
+    needs: [ build-card, build-android, build-desktop, build-ios ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+
+      - name: Delete old release & tag
+        run: gh release delete git-ledger-latest --cleanup-tag -y || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Draft Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          prerelease: true
+          name: "Internal Build: git-ledger"
+          tag_name: "git-ledger-latest"
+          target_commitish: ${{ github.sha }}
+          files: |
+            Android-APK/*
+            Desktop-*/*
+            SmartCard-Applet/*
+            iOS-XCFramework/*

@@ -5,6 +5,12 @@
 *.ledgerEntry
 *.ctxt
 
+# --------------------
+# Rust / Cargo
+# --------------------
+**/target/
+**/*.rs.bk
+
 # Mobile Tools for Java (J2ME)
 .mtj.tmp/
 
@@ -15,7 +21,6 @@ replay_pid*
 # --------------------
 # Archives & Packages
 # --------------------
-*.jar
 *.war
 *.nar
 *.ear
@@ -37,6 +42,7 @@ build/
 # IDE - IntelliJ IDEA
 # --------------------
 .idea/
+!.idea/icon.svg
 *.iws
 *.iml
 *.ipr
@@ -87,8 +93,6 @@ bin/
 .Trashes
 ehthumbs.db
 Thumbs.db
-
-target/
 
 # --------------------
 # Logs and Keys
