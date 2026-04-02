@@ -8,7 +8,8 @@
 # --------------------
 # Rust / Cargo
 # --------------------
-**/target/
+dist/
+target/
 **/*.rs.bk
 
 # Mobile Tools for Java (J2ME)
@@ -41,7 +42,7 @@ build/
 # --------------------
 # IDE - IntelliJ IDEA
 # --------------------
-.idea/
+.idea/*
 !.idea/icon.svg
 *.iws
 *.iml

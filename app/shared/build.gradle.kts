@@ -93,11 +93,15 @@ val buildAndroidRust = tasks.register<Exec>("buildAndroidRust") {
 val buildAppleRust = tasks.register<Exec>("buildAppleRust") {
     workingDir = coreDir
     commandLine("boltffi", "pack", "apple")
+
+    onlyIf {
+        System.getProperty("os.name").lowercase().contains("mac")
+    }
 }
 
 val buildJvmRust = tasks.register<Exec>("buildJvmRust") {
     workingDir = coreDir
-    commandLine("boltffi", "pack", "jvm")
+    commandLine("boltffi", "pack", "java")
 }
 
 val buildRustBindings = tasks.register("buildRustBindings") {
@@ -125,6 +129,7 @@ val syncRustBinaries = tasks.register<Copy>("syncRustBinaries") {
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    dependsOn(rootProject.tasks.named("generateConstants"))
     dependsOn(syncRustBinaries)
 }
 

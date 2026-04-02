@@ -1,0 +1,12 @@
+[package]
+name = "core"
+crate = "core"
+
+[targets.android]
+enabled = true
+
+[targets.apple]
+enabled = true
+
+[targets.java.jvm]
+enabled = true

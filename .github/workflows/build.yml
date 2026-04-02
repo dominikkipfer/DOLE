@@ -23,6 +23,7 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: 21
+          cache: 'gradle'
       - name: Make gradlew executable
         run: chmod +x ./gradlew
         shell: bash
@@ -32,7 +33,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: SmartCard-Applet
-          path: card/build/libs/*.cap
+          path: card/build/card.cap
           retention-days: 14
 
   build-android:
@@ -46,10 +47,13 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: 21
+          cache: 'gradle'
       - name: Install Rust for Android
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
+      - name: Cache Rust & Cargo
+        uses: Swatinem/rust-cache@v2
       - name: Install BoltFFI
         run: cargo install boltffi_cli
       - name: Make gradlew executable
@@ -85,8 +89,16 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: 21
+          cache: 'gradle'
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+      - name: Set Windows Rust to GNU (Fixes -fPIC error)
+        if: matrix.os == 'windows-latest'
+        run: |
+          rustup target add x86_64-pc-windows-gnu
+          rustup default stable-x86_64-pc-windows-gnu
+      - name: Cache Rust & Cargo
+        uses: Swatinem/rust-cache@v2
       - name: Install BoltFFI
         run: cargo install boltffi_cli
       - name: Make gradlew executable
@@ -117,10 +129,13 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: 21
+          cache: 'gradle'
       - name: Install Rust for iOS
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
+      - name: Cache Rust & Cargo
+        uses: Swatinem/rust-cache@v2
       - name: Install BoltFFI
         run: cargo install boltffi_cli
       - name: Make gradlew executable
@@ -139,7 +154,6 @@ jobs:
     name: Create/Update Internal Draft Release
     needs: [ build-card, build-android, build-desktop, build-ios ]
     runs-on: ubuntu-latest
-    if: always()
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v8
