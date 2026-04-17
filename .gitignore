@@ -11,6 +11,9 @@
 dist/
 target/
 **/*.rs.bk
+/core/src/constants.rs
+*.dll
+*.so
 
 # Mobile Tools for Java (J2ME)
 .mtj.tmp/

@@ -17,9 +17,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
       - name: Set up JDK 21
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: 21
@@ -30,7 +30,7 @@ jobs:
       - name: Build CAP Applet
         run: ./gradlew :card:buildApplet
       - name: Upload CAP Artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: SmartCard-Applet
           path: card/build/card.cap
@@ -41,9 +41,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
       - name: Set up JDK 21
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: 21
@@ -54,15 +54,16 @@ jobs:
           targets: aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
       - name: Cache Rust & Cargo
         uses: Swatinem/rust-cache@v2
-      - name: Install BoltFFI
-        run: cargo install boltffi_cli
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
       - name: Make gradlew executable
         run: chmod +x ./gradlew
         shell: bash
       - name: Build Release APK
         run: ./gradlew :app:androidApp:assembleRelease
       - name: Upload Android Artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: Android-APK
           path: app/androidApp/build/outputs/apk/release/*.apk
@@ -83,31 +84,24 @@ jobs:
             os_name: macOS (ARM64)
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
       - name: Set up JDK 21
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: 21
           cache: 'gradle'
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-      - name: Set Windows Rust to GNU (Fixes -fPIC error)
-        if: matrix.os == 'windows-latest'
-        run: |
-          rustup target add x86_64-pc-windows-gnu
-          rustup default stable-x86_64-pc-windows-gnu
       - name: Cache Rust & Cargo
         uses: Swatinem/rust-cache@v2
-      - name: Install BoltFFI
-        run: cargo install boltffi_cli
       - name: Make gradlew executable
         run: chmod +x ./gradlew
         shell: bash
       - name: Build Desktop Distribution
         run: ./gradlew :app:desktopApp:packageReleaseDistributionForCurrentOS
       - name: Upload Desktop Artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: Desktop-${{ matrix.os_name }}
           path: |
@@ -119,13 +113,13 @@ jobs:
           retention-days: 14
 
   build-ios:
-    name: Build iOS (Framework)
+    name: Build iOS (Framework & Rust Bindings)
     runs-on: macos-latest
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
       - name: Set up JDK 21
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: 21
@@ -136,18 +130,35 @@ jobs:
           targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
       - name: Cache Rust & Cargo
         uses: Swatinem/rust-cache@v2
-      - name: Install BoltFFI
-        run: cargo install boltffi_cli
+      - name: Build Rust iOS (Device)
+        run: cargo build --target aarch64-apple-ios --release
+        working-directory: core
+      - name: Build Rust iOS (Simulator ARM64)
+        run: cargo build --target aarch64-apple-ios-sim --release
+        working-directory: core
+      - name: Build Rust iOS (Simulator x86_64)
+        run: cargo build --target x86_64-apple-ios --release
+        working-directory: core
+      - name: Generate Swift Bindings
+        run: cargo run --bin uniffi-bindgen -- generate src/lib.rs --language swift --out-dir ../ios-bindings
+        working-directory: core
+
       - name: Make gradlew executable
         run: chmod +x ./gradlew
         shell: bash
       - name: Build iOS XCFramework
         run: ./gradlew :app:shared:assembleXCFramework
-      - name: Upload iOS Framework
-        uses: actions/upload-artifact@v7
+
+      - name: Upload iOS Artifacts
+        uses: actions/upload-artifact@v4
         with:
-          name: iOS-XCFramework
-          path: app/shared/build/XCFrameworks/
+          name: iOS-Artifacts
+          path: |
+            app/shared/build/XCFrameworks/
+            ios-bindings/
+            core/target/aarch64-apple-ios/release/libcore.a
+            core/target/aarch64-apple-ios-sim/release/libcore.a
+            core/target/x86_64-apple-ios/release/libcore.a
           retention-days: 14
 
   create-draft-release:
@@ -156,7 +167,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
       - name: Delete old release & tag
         run: gh release delete git-ledger-latest --cleanup-tag -y || true
         env:
@@ -173,4 +184,4 @@ jobs:
             Android-APK/*
             Desktop-*/*
             SmartCard-Applet/*
-            iOS-XCFramework/*
+            iOS-Artifacts/*

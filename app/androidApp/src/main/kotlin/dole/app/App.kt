@@ -1,4 +1,4 @@
-package dole
+package dole.app
 
 import android.app.Application
 

@@ -10,3 +10,5 @@ plugins {
     alias(libs.plugins.kotlin.serialization) apply false
     alias(libs.plugins.metro) apply false
 }
+
+apply(from = "gradle/generate-constants.gradle.kts")

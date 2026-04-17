@@ -24,6 +24,11 @@ android {
     namespace = "dole.app"
     compileSdk = libs.versions.android.compile.sdk.get().toInt()
 
+    compileOptions {
+        sourceCompatibility = JavaVersion.toVersion(jdkVersion.toInt())
+        targetCompatibility = JavaVersion.toVersion(jdkVersion.toInt())
+    }
+
     defaultConfig {
         applicationId = "dole.app"
         targetSdk = libs.versions.android.compile.sdk.get().toInt()

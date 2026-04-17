@@ -3,6 +3,7 @@
 import com.mikepenz.aboutlibraries.plugin.DuplicateMode
 import com.mikepenz.aboutlibraries.plugin.DuplicateRule
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
+import org.jetbrains.kotlin.konan.target.HostManager
 
 plugins {
     alias(libs.plugins.about.libraries)
@@ -15,6 +16,8 @@ plugins {
 }
 
 val jdkVersion = libs.versions.java.get().toInt()
+val coreDir = file("${project.rootDir}/core")
+val uniffiGenDir = file("${layout.buildDirectory.get()}/generated/uniffi/kotlin")
 
 kotlin {
     jvmToolchain(jdkVersion)
@@ -28,109 +31,106 @@ kotlin {
 
     jvm()
 
-    listOf(
-        iosArm64(),
-        iosSimulatorArm64()
-    ).forEach {
-        it.binaries.framework {
-            baseName = "shared"
-            isStatic = true
-        }
-
-        it.compilations.getByName("main").cinterops.create("core_bindings") {
-            defFile(project.file("src/nativeInterop/cinterop/core_bindings.def"))
-            compilerOpts("-framework", "CoreBindings", "-F${project.rootDir}/core/dist/apple/")
-        }
-
-        it.binaries.all {
-            linkerOpts("-framework", "CoreBindings", "-F${project.rootDir}/core/dist/apple/")
+    if (HostManager.hostIsMac) {
+        listOf(iosArm64(), iosSimulatorArm64()).forEach {
+            it.binaries.framework {
+                baseName = "shared"
+                isStatic = true
+            }
         }
     }
 
     applyDefaultHierarchyTemplate()
 
     sourceSets {
-        commonMain{
-            kotlin.srcDir("${project.rootDir}/core/dist/common/kotlin")
-
+        commonMain {
+            kotlin.srcDir(layout.buildDirectory.dir("generated/source/constants/kotlin"))
             dependencies {
-                implementation(project(":common"))
-
-                implementation(libs.runtime)
-                implementation(libs.foundation)
-                implementation(libs.material.icons.extended)
-                implementation(libs.material3)
-                implementation(libs.ui)
-                implementation(libs.components.resources)
-
+                implementation(libs.compose.runtime)
+                implementation(libs.compose.foundation)
+                implementation(libs.compose.material.icons.extended)
+                implementation(libs.compose.material3)
+                implementation(libs.compose.ui)
+                implementation(libs.compose.animation)
+                implementation(libs.compose.components.resources)
                 implementation(libs.multiplatform.settings)
                 implementation(libs.kotlinx.serialization.json)
             }
         }
 
-        androidMain.dependencies {
-            implementation(libs.androidx.activity.compose)
-            implementation(libs.androidx.core.ktx)
+        androidMain {
+            kotlin.srcDir(uniffiGenDir)
+            dependencies {
+                implementation(libs.androidx.activity.compose)
+                implementation(libs.androidx.core.ktx)
+                implementation("${libs.jna.get()}@aar")
+            }
         }
 
-        iosMain.dependencies {
-
+        jvmMain {
+            kotlin.srcDir(uniffiGenDir)
+            dependencies {
+                implementation(libs.kotlinx.coroutines.swing)
+                implementation(libs.jna)
+            }
         }
-
-        jvmMain.dependencies {
-            implementation(libs.kotlinx.coroutines.swing)
-        }
-    }
-}
-
-val coreDir = file("${project.rootDir}/core")
-
-val buildAndroidRust = tasks.register<Exec>("buildAndroidRust") {
-    workingDir = coreDir
-    commandLine("boltffi", "pack", "android")
-}
-
-val buildAppleRust = tasks.register<Exec>("buildAppleRust") {
-    workingDir = coreDir
-    commandLine("boltffi", "pack", "apple")
-
-    onlyIf {
-        System.getProperty("os.name").lowercase().contains("mac")
     }
 }
 
 val buildJvmRust = tasks.register<Exec>("buildJvmRust") {
+    dependsOn(rootProject.tasks.named("generateConstants"))
     workingDir = coreDir
-    commandLine("boltffi", "pack", "java")
+    commandLine("cargo", "build", "--release")
 }
 
-val buildRustBindings = tasks.register("buildRustBindings") {
-    dependsOn(buildAndroidRust, buildAppleRust, buildJvmRust)
+val generateUniffiBindings = tasks.register<Exec>("generateUniffiBindings") {
+    dependsOn(buildJvmRust)
+    workingDir = coreDir
 
-    inputs.dir(file("${coreDir}/src"))
-    inputs.file(file("${coreDir}/Cargo.toml"))
-    outputs.dir(file("${coreDir}/dist"))
+    val libName = System.mapLibraryName("core")
+    val libPath = "target/release/$libName"
 
-    doLast {
-        println("Rust Bindings wurden erfolgreich für alle Plattformen generiert!")
-    }
+    commandLine(
+        "cargo", "run", "--bin", "uniffi-bindgen",
+        "--",
+        "generate", "--library", libPath, "--language", "kotlin", "--out-dir", uniffiGenDir.absolutePath, "--no-format"
+    )
 }
 
-val syncRustBinaries = tasks.register<Copy>("syncRustBinaries") {
-    dependsOn(buildRustBindings)
+val buildAndroidRust = tasks.register<Exec>("buildAndroidRust") {
+    dependsOn(generateUniffiBindings)
+    workingDir = coreDir
+    commandLine("cargo", "ndk", "-t", "arm64-v8a", "-o", "${coreDir}/dist/android/jniLibs", "build", "--release")
+}
 
-    from("${project.rootDir}/core/dist/android/jniLibs") {
-        into("src/androidMain/jniLibs")
+val syncJvmRustBinaries = tasks.register<Copy>("syncJvmRustBinaries") {
+    dependsOn(buildJvmRust)
+    from("${coreDir}/target/release") {
+        include("*.dll", "*.dylib", "*.so")
     }
+    into(layout.projectDirectory.dir("src/jvmMain/resources"))
+}
 
-    from("${project.rootDir}/core/dist/jvm/lib") {
-        into("src/jvmMain/resources/native")
-    }
+val syncAndroidRustBinaries = tasks.register<Copy>("syncAndroidRustBinaries") {
+    dependsOn(buildAndroidRust)
+    from("${coreDir}/dist/android/jniLibs")
+    into(layout.projectDirectory.dir("src/androidMain/jniLibs"))
+}
+
+val syncRustBinaries = tasks.register("syncRustBinaries") {
+    dependsOn(syncAndroidRustBinaries, syncJvmRustBinaries)
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-    dependsOn(rootProject.tasks.named("generateConstants"))
-    dependsOn(syncRustBinaries)
+    dependsOn(generateUniffiBindings, syncRustBinaries, rootProject.tasks.named("generateConstants"))
+}
+
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }.configureEach {
+    dependsOn(syncAndroidRustBinaries)
+}
+
+tasks.matching { it.name == "jvmProcessResources" || it.name == "jvmTestProcessResources" }.configureEach {
+    dependsOn(syncJvmRustBinaries)
 }
 
 aboutLibraries {

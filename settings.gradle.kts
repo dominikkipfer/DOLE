@@ -26,8 +26,6 @@ plugins {
 
 val isJetBrains = System.getProperty("idea.vendor.name") == "JetBrains"
 
-include(":common")
-
 include(":card")
 
 include(":app:shared")

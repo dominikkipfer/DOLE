@@ -4,9 +4,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
-import dole.card.PCSmartCard
-import dole.gui.WalletApp
-import dole.gui.WalletViewModel
+import dole.ui.screens.WalletApp
+import dole.ui.screens.WalletViewModel
 import org.jetbrains.compose.resources.decodeToSvgPainter
 import java.io.File
 
@@ -16,6 +15,7 @@ fun main() = application {
         val doleDir = File(userHome, ".dole")
         if (!doleDir.exists()) doleDir.mkdirs()
 
+        WalletViewModel(doleDir.absolutePath)
     }
 
     val icon = remember {

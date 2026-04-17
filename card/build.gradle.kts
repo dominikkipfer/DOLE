@@ -25,7 +25,15 @@ val sdkRoot: Provider<Directory> = layout.buildDirectory.dir("javacard-sdk")
 val sdkLib: Provider<RegularFile> = sdkRoot.map { it.dir("jc320v25.1_kit").dir("lib").file("api_classic-3.0.5.jar") }
 
 java {
-    toolchain { languageVersion.set(JavaLanguageVersion.of(21)) }
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    }
+}
+
+sourceSets {
+    main {
+        java.srcDir(layout.buildDirectory.dir("generated/source/constants/java"))
+    }
 }
 
 val downloadAntJar by tasks.registering {
@@ -81,9 +89,6 @@ val extractSdk by tasks.registering(Copy::class) {
 }
 
 dependencies {
-    implementation(project(":common"))
-    "toolImplementation"(project(":common"))
-
     gp(files(gpJar) {
         builtBy(downloadGpJar)
     })
@@ -93,9 +98,9 @@ dependencies {
     })
 }
 
-val constantsFile: File = project(":common").file("src/main/java/dole/Constants.java")
-val constantsText = if (constantsFile.exists()) constantsFile.readText() else ""
-val appletAid = """APPLET_AID_HEX\s*=\s*"([A-Fa-f0-9]+)"""".toRegex().find(constantsText)?.groupValues?.get(1)
+val tomlFile: File = rootProject.file("constants.toml")
+val tomlText = if (tomlFile.exists()) tomlFile.readText() else ""
+val appletAid = """APPLET_AID_HEX\s*=\s*"([A-Fa-f0-9]+)"""".toRegex().find(tomlText)?.groupValues?.get(1)
 val pkgAid = appletAid?.substring(0, 10)
 
 val buildApplet by tasks.registering {
@@ -104,10 +109,11 @@ val buildApplet by tasks.registering {
     dependsOn("compileJava")
     dependsOn(downloadAntJar)
     dependsOn(downloadGpJar)
+    dependsOn(rootProject.tasks.named("generateConstants"))
 
-    val sourceDirs = files("src/main/java", project(":common").file("src/main/java"))
+    val sourceDirs = files("src/main/java", layout.buildDirectory.dir("generated/source/constants/java"))
     inputs.files(sourceDirs)
-    inputs.file(constantsFile)
+    inputs.file(tomlFile)
 
     val capFile = layout.buildDirectory.file("card.cap")
     outputs.file(capFile)
@@ -119,7 +125,7 @@ val buildApplet by tasks.registering {
 
     val localPkgAid = pkgAid
     val localAppletAid = appletAid
-    val localSources = "${project.projectDir}/src/main/java;${project(":common").projectDir}/src/main/java"
+    val localSources = "${project.projectDir}/src/main/java;${layout.buildDirectory.get().asFile.absolutePath}/generated/source/constants/java"
 
     doLast {
         val sdkPath = localSdkDir.get()
@@ -184,4 +190,8 @@ mapOf("Minter" to true, "User" to false).forEach { (type, isMinter) ->
         mainClass.set("provisioner.Provisioner")
         standardInput = System.`in`
     }
+}
+
+tasks.named("compileJava") {
+    dependsOn(rootProject.tasks.named("generateConstants"))
 }

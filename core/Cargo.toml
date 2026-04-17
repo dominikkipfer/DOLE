@@ -6,6 +6,10 @@ edition = "2024"
 [lib]
 crate-type = ["cdylib", "staticlib"]
 
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+
 [dependencies]
-boltffi = "0.21"
+uniffi = { version = "0.31.1", features = ["cli"] }
 gix = "0.81"
