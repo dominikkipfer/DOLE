@@ -4,6 +4,7 @@ import com.mikepenz.aboutlibraries.plugin.DuplicateMode
 import com.mikepenz.aboutlibraries.plugin.DuplicateRule
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.konan.target.HostManager
+import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
 
 plugins {
     alias(libs.plugins.about.libraries)
@@ -18,6 +19,7 @@ plugins {
 val jdkVersion = libs.versions.java.get().toInt()
 val coreDir = file("${project.rootDir}/core")
 val uniffiGenDir = file("${layout.buildDirectory.get()}/generated/uniffi/kotlin")
+val uniffiSwiftGenDir = file("${layout.buildDirectory.get()}/generated/uniffi/swift")
 
 kotlin {
     jvmToolchain(jdkVersion)
@@ -31,11 +33,13 @@ kotlin {
 
     jvm()
 
+    val xcf = XCFramework()
     if (HostManager.hostIsMac) {
         listOf(iosArm64(), iosSimulatorArm64()).forEach {
             it.binaries.framework {
                 baseName = "shared"
                 isStatic = true
+                xcf.add(this)
             }
         }
     }
@@ -83,13 +87,19 @@ val buildJvmRust = tasks.register<Exec>("buildJvmRust") {
     commandLine("cargo", "build", "--release")
 }
 
+val syncJvmRustBinaries = tasks.register<Copy>("syncJvmRustBinaries") {
+    dependsOn(buildJvmRust)
+    from("${coreDir}/target/release") {
+        include("*.dll", "*.dylib", "*.so")
+    }
+    into(layout.projectDirectory.dir("src/jvmMain/resources"))
+}
+
 val generateUniffiBindings = tasks.register<Exec>("generateUniffiBindings") {
     dependsOn(buildJvmRust)
     workingDir = coreDir
-
     val libName = System.mapLibraryName("core")
     val libPath = "target/release/$libName"
-
     commandLine(
         "cargo", "run", "--bin", "uniffi-bindgen",
         "--",
@@ -103,18 +113,27 @@ val buildAndroidRust = tasks.register<Exec>("buildAndroidRust") {
     commandLine("cargo", "ndk", "-t", "arm64-v8a", "-o", "${coreDir}/dist/android/jniLibs", "build", "--release")
 }
 
-val syncJvmRustBinaries = tasks.register<Copy>("syncJvmRustBinaries") {
-    dependsOn(buildJvmRust)
-    from("${coreDir}/target/release") {
-        include("*.dll", "*.dylib", "*.so")
-    }
-    into(layout.projectDirectory.dir("src/jvmMain/resources"))
-}
-
 val syncAndroidRustBinaries = tasks.register<Copy>("syncAndroidRustBinaries") {
     dependsOn(buildAndroidRust)
     from("${coreDir}/dist/android/jniLibs")
     into(layout.projectDirectory.dir("src/androidMain/jniLibs"))
+}
+
+val buildIosRust = tasks.register<Exec>("buildIosRust") {
+    dependsOn(rootProject.tasks.named("generateConstants"))
+    workingDir = coreDir
+    commandLine("cargo", "build", "--target", "aarch64-apple-ios", "--release")
+}
+
+val generateUniffiSwiftBindings = tasks.register<Exec>("generateUniffiSwiftBindings") {
+    dependsOn(buildIosRust)
+    workingDir = coreDir
+    commandLine(
+        "cargo", "run", "--bin", "uniffi-bindgen",
+        "--",
+        "generate", "--library", "target/aarch64-apple-ios/release/libcore.a",
+        "--language", "swift", "--out-dir", uniffiSwiftGenDir.absolutePath, "--no-format"
+    )
 }
 
 val syncRustBinaries = tasks.register("syncRustBinaries") {
@@ -125,12 +144,20 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
     dependsOn(generateUniffiBindings, syncRustBinaries, rootProject.tasks.named("generateConstants"))
 }
 
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinNativeCompile>().configureEach {
+    dependsOn(rootProject.tasks.named("generateConstants"))
+}
+
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }.configureEach {
     dependsOn(syncAndroidRustBinaries)
 }
 
-tasks.matching { it.name == "jvmProcessResources" || it.name == "jvmTestProcessResources" }.configureEach {
+tasks.matching { it.name == "jvmProcessResources" || it.name == "jvmTestProcessResources" || it.name == "runJvm" }.configureEach {
     dependsOn(syncJvmRustBinaries)
+}
+
+tasks.matching { it.name.contains("XCFramework", ignoreCase = true) || it.name.startsWith("link") }.configureEach {
+    dependsOn(generateUniffiSwiftBindings)
 }
 
 aboutLibraries {

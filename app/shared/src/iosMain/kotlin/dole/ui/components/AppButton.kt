@@ -78,7 +78,6 @@ actual fun AppOutlinedButton(text: String, onClick: () -> Unit, modifier: Modifi
             button.layer.borderWidth = 1.0
             button.layer.cornerRadius = 12.0
 
-            @Suppress("MISSING_DEPENDENCY_CLASS")
             button.layer.borderColor = textColor.toUIColor().CGColor
             button.setTitleColor(textColor.toUIColor(), UIControlStateNormal)
 
@@ -90,7 +89,6 @@ actual fun AppOutlinedButton(text: String, onClick: () -> Unit, modifier: Modifi
         update = { button ->
             button.setTitle(text, UIControlStateNormal)
 
-            @Suppress("MISSING_DEPENDENCY_CLASS")
             button.layer.borderColor = textColor.toUIColor().CGColor
             button.setTitleColor(textColor.toUIColor(), UIControlStateNormal)
         },

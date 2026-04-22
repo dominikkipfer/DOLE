@@ -8,7 +8,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.interop.UIKitView
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.UIKit.UIColor
-import platform.UIKit.UITextBorderStyleRoundedRect
+import platform.UIKit.UITextBorderStyle
 import platform.UIKit.UITextField
 
 private fun Color.toUIColor(): UIColor {
@@ -39,8 +39,8 @@ actual fun AppTextField(
     UIKitView(
         factory = {
             val textField = UITextField()
-            textField.borderStyle = UITextBorderStyleRoundedRect
-            textField.placeholder = placeholder
+			textField.borderStyle = UITextBorderStyle.UITextBorderStyleRoundedRect
+			textField.placeholder = placeholder
             textField.secureTextEntry = isPassword
             textField.backgroundColor = containerColor.toUIColor()
             textField.userInteractionEnabled = !readOnly
