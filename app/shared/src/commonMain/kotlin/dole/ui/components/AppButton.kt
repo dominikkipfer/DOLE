@@ -29,3 +29,11 @@ expect fun AppOutlinedButton(
     modifier: Modifier = Modifier,
     textColor: Color = MaterialTheme.colorScheme.onSurface
 )
+
+@Composable
+expect fun AppSwitchButton(
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+)

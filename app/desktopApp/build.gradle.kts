@@ -11,6 +11,7 @@ kotlin {
         implementation(compose.desktop.currentOs)
         implementation(libs.compose.components.resources)
         implementation(libs.kotlinx.coroutines.swing)
+        implementation(libs.multiplatform.settings)
     }
 }
 

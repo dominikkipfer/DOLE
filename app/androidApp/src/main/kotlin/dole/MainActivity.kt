@@ -1,36 +1,134 @@
 package dole
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
+import android.nfc.NfcAdapter
+import android.nfc.Tag
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
-import dole.ui.screens.WalletApp
-import dole.ui.screens.WalletViewModel
+import androidx.compose.runtime.remember
+import com.russhwolf.settings.SharedPreferencesSettings
+import dole.card.AndroidSmartCard
+import dole.core.CoreWrapper
+import dole.data.AccountRepositoryImpl
+import dole.data.AccountStorage
+import dole.utils.AndroidSecureStorage
+import dole.viewmodel.WalletApp
+import dole.viewmodel.WalletViewModel
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
 
     private var multicastLock: WifiManager.MulticastLock? = null
+    private var nfcAdapter: NfcAdapter? = null
+    private var syncStarted = false
+    private lateinit var storagePath: String
+    private val smartCard = AndroidSmartCard(null)
+
+    private external fun initNdkContext(context: Context)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        checkPermissions()
-        acquireMulticastLock()
 
-        val storagePath = applicationContext.filesDir.absolutePath
-        val viewModel = WalletViewModel(storagePath)
+        try {
+            System.loadLibrary("core")
+        } catch (e: Throwable) {
+            Log.e("DOLE", "Failed to load libcore.so", e)
+        }
+
+        try {
+            initNdkContext(this.applicationContext)
+            Log.i("DOLE", "ndk-context initialized")
+        } catch (e: Throwable) {
+            Log.e("DOLE", "ndk-context init failed", e)
+        }
+
+        nfcAdapter = NfcAdapter.getDefaultAdapter(this)
+
+        storagePath = applicationContext.filesDir.absolutePath
+        val prefs = getSharedPreferences("dole_settings", MODE_PRIVATE)
+        val settings = SharedPreferencesSettings(prefs)
+        val accountStorage = AccountStorage(settings)
 
         setContent {
+            val secureStorage = remember { AndroidSecureStorage(this@MainActivity) }
+            val accountRepo = remember { AccountRepositoryImpl(secureStorage, accountStorage) }
+
+            val viewModel = remember {
+                WalletViewModel(accountRepo, accountStorage, smartCard, storagePath)
+            }
+
             WalletApp(viewModel)
+        }
+
+        if (checkPermissions()) {
+            startNetworkSync()
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        val flags = NfcAdapter.FLAG_READER_NFC_A or NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK
+        nfcAdapter?.enableReaderMode(this, this, flags, null)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        nfcAdapter?.disableReaderMode(this)
+
+        smartCard.tag = null
+        try { smartCard.disconnect() } catch (_: Exception) {}
+    }
+
+    override fun onTagDiscovered(tag: Tag?) {
+        Log.i("NFC", "Card scanned")
+        smartCard.tag = tag
+    }
+
     override fun onDestroy() {
+        if (syncStarted) {
+            CoreWrapper.stopGlobalSync()
+            syncStarted = false
+        }
         releaseMulticastLock()
         super.onDestroy()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+
+        if (requestCode != NETWORK_PERMISSION_REQUEST) {
+            return
+        }
+
+        val granted = grantResults.isNotEmpty() &&
+            grantResults.all { it == PackageManager.PERMISSION_GRANTED }
+
+        if (granted) {
+            Log.i("DOLE", "Network permissions granted; starting sync")
+            startNetworkSync()
+        } else {
+            Log.w("DOLE", "Network permissions denied; sync engine not started")
+        }
+    }
+
+    private fun startNetworkSync() {
+        if (syncStarted) {
+            return
+        }
+
+        acquireMulticastLock()
+        CoreWrapper.startGlobalSync(storagePath)
+        syncStarted = true
+        Log.i("DOLE", "Sync engine start requested")
     }
 
     private fun acquireMulticastLock() {
@@ -40,9 +138,9 @@ class MainActivity : ComponentActivity() {
                 setReferenceCounted(false)
                 acquire()
             }
-            Log.i("DOLE_P2P", "MulticastLock acquired")
+            Log.i("DOLE", "MulticastLock acquired")
         } catch (t: Throwable) {
-            Log.e("DOLE_P2P", "Failed to acquire MulticastLock", t)
+            Log.e("DOLE", "MulticastLock acquire failed", t)
         }
     }
 
@@ -51,15 +149,15 @@ class MainActivity : ComponentActivity() {
             multicastLock?.let {
                 if (it.isHeld) it.release()
             }
-            Log.i("DOLE_P2P", "MulticastLock released")
+            Log.i("DOLE", "MulticastLock released")
         } catch (t: Throwable) {
-            Log.e("DOLE_P2P", "Failed to release MulticastLock", t)
+            Log.e("DOLE", "MulticastLock release failed", t)
         } finally {
             multicastLock = null
         }
     }
 
-    private fun checkPermissions() {
+    private fun checkPermissions(): Boolean {
         val missing = mutableListOf<String>()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -87,7 +185,15 @@ class MainActivity : ComponentActivity() {
         }
 
         if (missing.isNotEmpty()) {
-            requestPermissions(missing.toTypedArray(), 0)
+            Log.i("DOLE", "Requesting network permissions: ${missing.joinToString()}")
+            requestPermissions(missing.toTypedArray(), NETWORK_PERMISSION_REQUEST)
+            return false
         }
+
+        return true
+    }
+
+    companion object {
+        private const val NETWORK_PERMISSION_REQUEST = 1001
     }
 }

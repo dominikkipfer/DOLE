@@ -10,6 +10,9 @@ val gp: Configuration by configurations.creating
 
 val toolSourceSet: SourceSet = sourceSets.create("tool") {
     java.srcDir("src/tool/java")
+
+    compileClasspath += sourceSets.main.get().output
+    runtimeClasspath += sourceSets.main.get().output
 }
 
 val sdkUrl = "https://github.com/martinpaljak/oracle_javacard_sdks/archive/3751d774dd.zip"
@@ -98,8 +101,8 @@ dependencies {
     })
 }
 
-val tomlFile: File = rootProject.file("constants.toml")
-val tomlText = if (tomlFile.exists()) tomlFile.readText() else ""
+val confFile: File = rootProject.file("constants.conf")
+val tomlText = if (confFile.exists()) confFile.readText() else ""
 val appletAid = """APPLET_AID_HEX\s*=\s*"([A-Fa-f0-9]+)"""".toRegex().find(tomlText)?.groupValues?.get(1)
 val pkgAid = appletAid?.substring(0, 10)
 
@@ -113,7 +116,7 @@ val buildApplet by tasks.registering {
 
     val sourceDirs = files("src/main/java", layout.buildDirectory.dir("generated/source/constants/java"))
     inputs.files(sourceDirs)
-    inputs.file(tomlFile)
+    inputs.file(confFile)
 
     val capFile = layout.buildDirectory.file("card.cap")
     outputs.file(capFile)
@@ -145,7 +148,8 @@ val buildApplet by tasks.registering {
                     "version" to "0.1",
                     "output" to capPath,
                     "sources" to localSources,
-                    "classes" to classesPath
+                    "classes" to classesPath,
+                    "ints" to "true"
                 ) {
                     "applet"("class" to "card.Card", "aid" to localAppletAid)
                 }
@@ -193,5 +197,9 @@ mapOf("Minter" to true, "User" to false).forEach { (type, isMinter) ->
 }
 
 tasks.named("compileJava") {
+    dependsOn(rootProject.tasks.named("generateConstants"))
+}
+
+tasks.named("compileToolJava") {
     dependsOn(rootProject.tasks.named("generateConstants"))
 }

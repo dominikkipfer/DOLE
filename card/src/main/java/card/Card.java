@@ -15,63 +15,16 @@ import javacard.security.KeyBuilder;
 import javacard.security.KeyPair;
 import javacard.security.MessageDigest;
 import javacard.security.Signature;
+import javacardx.apdu.ExtendedLength;
 import dole.Constants;
 
-public class Card extends Applet {
+/**
+ * DOLE smart card applet. Manages balance via persistent running counter,
+ * stores peers by full 65-byte public key, uses type-specific signed log formats.
+ */
+public class Card extends Applet implements ExtendedLength {
 
-    // --- ROOT CA PUBLIC KEY ---
-    public static final byte[] ROOT_CA_BYTES = {
-            (byte)0x04,
-            (byte)0x36, (byte)0x2B, (byte)0x9D, (byte)0xBF, (byte)0xDE, (byte)0x93, (byte)0x5B, (byte)0x15,
-            (byte)0x3C, (byte)0x59, (byte)0xE9, (byte)0xBD, (byte)0x80, (byte)0x89, (byte)0x03, (byte)0x7D,
-            (byte)0x62, (byte)0xA7, (byte)0x2B, (byte)0x68, (byte)0xCC, (byte)0xDD, (byte)0x4C, (byte)0x8D,
-            (byte)0x3A, (byte)0x1D, (byte)0xB9, (byte)0x16, (byte)0x74, (byte)0x96, (byte)0x7D, (byte)0x97,
-
-            (byte)0x5B, (byte)0xFB, (byte)0x03, (byte)0x29, (byte)0x50, (byte)0xD7, (byte)0x5A, (byte)0xA3,
-            (byte)0x05, (byte)0xB5, (byte)0x18, (byte)0xDE, (byte)0xC7, (byte)0xE9, (byte)0xF7, (byte)0x9E,
-            (byte)0x8F, (byte)0x7D, (byte)0xD1, (byte)0x25, (byte)0x27, (byte)0xDF, (byte)0x01, (byte)0x19,
-            (byte)0x8E, (byte)0xBF, (byte)0xDD, (byte)0xE0, (byte)0x18, (byte)0x78, (byte)0x0D, (byte)0x3B,
-    };
-
-    // --- SECP256R1 (NIST P-256) CONSTANTS ---
-    private static final byte[] SECP256R1_P = {
-            (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x01,
-            (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x00,
-            (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x00, (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFF,
-            (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFF
-    };
-    private static final byte[] SECP256R1_A = {
-            (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x01,
-            (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x00,
-            (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x00, (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFF,
-            (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFC
-    };
-    private static final byte[] SECP256R1_B = {
-            (byte)0x5A, (byte)0xC6, (byte)0x35, (byte)0xD8, (byte)0xAA, (byte)0x3A, (byte)0x93, (byte)0xE7,
-            (byte)0xB3, (byte)0xEB, (byte)0xBD, (byte)0x55, (byte)0x76, (byte)0x98, (byte)0x86, (byte)0xBC,
-            (byte)0x65, (byte)0x1D, (byte)0x06, (byte)0xB0, (byte)0xCC, (byte)0x53, (byte)0xB0, (byte)0xF6,
-            (byte)0x3B, (byte)0xCE, (byte)0x3C, (byte)0x3E, (byte)0x27, (byte)0xD2, (byte)0x60, (byte)0x4B
-    };
-    private static final byte[] SECP256R1_G = {
-            (byte)0x04,
-            (byte)0x6B, (byte)0x17, (byte)0xD1, (byte)0xF2, (byte)0xE1, (byte)0x2C, (byte)0x42, (byte)0x47,
-            (byte)0xF8, (byte)0xBC, (byte)0xE6, (byte)0xE5, (byte)0x63, (byte)0xA4, (byte)0x40, (byte)0xF2,
-            (byte)0x77, (byte)0x03, (byte)0x7D, (byte)0x81, (byte)0x2D, (byte)0xEB, (byte)0x33, (byte)0xA0,
-            (byte)0xF4, (byte)0xA1, (byte)0x39, (byte)0x45, (byte)0xD8, (byte)0x98, (byte)0xC2, (byte)0x96,
-            (byte)0x4F, (byte)0xE3, (byte)0x42, (byte)0xE2, (byte)0xFE, (byte)0x1A, (byte)0x7F, (byte)0x9B,
-            (byte)0x8E, (byte)0xE7, (byte)0xEB, (byte)0x4A, (byte)0x7C, (byte)0x0F, (byte)0x9E, (byte)0x16,
-            (byte)0x2B, (byte)0xCE, (byte)0x33, (byte)0x57, (byte)0x6B, (byte)0x31, (byte)0x5E, (byte)0xCE,
-            (byte)0xCB, (byte)0xB6, (byte)0x40, (byte)0x68, (byte)0x37, (byte)0xBF, (byte)0x51, (byte)0xF5
-    };
-    private static final byte[] SECP256R1_R = {
-            (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x00,
-            (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFF, (byte)0xFF,
-            (byte)0xBC, (byte)0xE6, (byte)0xFA, (byte)0xAD, (byte)0xA7, (byte)0x17, (byte)0x9E, (byte)0x84,
-            (byte)0xF3, (byte)0xB9, (byte)0xCA, (byte)0xC2, (byte)0xFC, (byte)0x63, (byte)0x25, (byte)0x51
-    };
-    private static final byte k = 1;
-
-    // --- STATE ---
+    // Applet State
     private final OwnerPIN ownerPin;
     private final boolean isMinter;
     private boolean setupDone = false;
@@ -81,11 +34,9 @@ public class Card extends Applet {
 
     // Persistent Storage
     private final byte[] seqNumber;
-    private final byte[] lastSignedHash;
+    private final byte[] balance;
     private final byte[] totalCreated;
     private final byte[] totalBurned;
-    private final byte[] totalReceived;
-    private final byte[] totalSent;
     private final byte[] peerData;
     private final byte[] myId;
     private final byte[] deviceCertificate;
@@ -108,9 +59,10 @@ public class Card extends Applet {
     private final byte[] mathA;
     private final byte[] mathB;
     private final byte[] mathRes;
-    private final byte[] mathT1;
-    private final byte[] mathT2;
     private final short[] parseResult;
+
+    private static final short SCRATCH_OFF = 200;
+    private static final short RESP_OFF = 300;
 
     /**
      * Installs the applet.
@@ -133,34 +85,29 @@ public class Card extends Applet {
         short paramDataOffset = (short)(paramLenOffset + 1);
 
         if (paramLen > 0) {
-            byte minterByte = bArray[paramDataOffset];
-            this.isMinter = (minterByte == (byte) 0x01);
+            this.isMinter = (bArray[paramDataOffset] == (byte) 0x01);
         } else {
             this.isMinter = false;
         }
 
-        seqNumber = new byte[Constants.GOC_SIZE];
-        lastSignedHash = new byte[Constants.HASH_SIZE];
-        totalCreated = new byte[Constants.GOC_SIZE];
-        totalBurned = new byte[Constants.GOC_SIZE];
-        totalReceived = new byte[Constants.GOC_SIZE];
-        totalSent = new byte[Constants.GOC_SIZE];
-        myId = new byte[Constants.ID_SIZE];
+        seqNumber    = new byte[Constants.LONG_SIZE];
+        balance      = new byte[Constants.LONG_SIZE];
+        totalCreated = new byte[Constants.LONG_SIZE];
+        totalBurned  = new byte[Constants.LONG_SIZE];
+        myId         = new byte[Constants.ID_SIZE];
         deviceCertificate = new byte[512];
-        peerData = new byte[Constants.CARD_MAX_PEERS * Constants.CARD_PEER_ROW_SIZE];
+        peerData     = new byte[Constants.CARD_MAX_PEERS * Constants.CARD_PEER_ROW_SIZE];
 
-        ramBuffer = JCSystem.makeTransientByteArray(Constants.CARD_RAM_BUFFER_SIZE, JCSystem.CLEAR_ON_DESELECT);
-        mathA = JCSystem.makeTransientByteArray(Constants.GOC_SIZE, JCSystem.CLEAR_ON_DESELECT);
-        mathB = JCSystem.makeTransientByteArray(Constants.GOC_SIZE, JCSystem.CLEAR_ON_DESELECT);
-        mathRes = JCSystem.makeTransientByteArray(Constants.GOC_SIZE, JCSystem.CLEAR_ON_DESELECT);
-        mathT1 = JCSystem.makeTransientByteArray(Constants.GOC_SIZE, JCSystem.CLEAR_ON_DESELECT);
-        mathT2 = JCSystem.makeTransientByteArray(Constants.GOC_SIZE, JCSystem.CLEAR_ON_DESELECT);
+        ramBuffer   = JCSystem.makeTransientByteArray(Constants.CARD_RAM_BUFFER_SIZE, JCSystem.CLEAR_ON_DESELECT);
+        mathA       = JCSystem.makeTransientByteArray(Constants.LONG_SIZE, JCSystem.CLEAR_ON_DESELECT);
+        mathB       = JCSystem.makeTransientByteArray(Constants.LONG_SIZE, JCSystem.CLEAR_ON_DESELECT);
+        mathRes     = JCSystem.makeTransientByteArray(Constants.LONG_SIZE, JCSystem.CLEAR_ON_DESELECT);
         parseResult = JCSystem.makeTransientShortArray((short) 2, JCSystem.CLEAR_ON_DESELECT);
 
         try {
             keyPair = new KeyPair(KeyPair.ALG_EC_FP, KeyBuilder.LENGTH_EC_FP_256);
             myPrivateKey = (ECPrivateKey) keyPair.getPrivate();
-            myPublicKey = (ECPublicKey) keyPair.getPublic();
+            myPublicKey  = (ECPublicKey) keyPair.getPublic();
 
             initCurve(myPrivateKey);
             initCurve(myPublicKey);
@@ -170,11 +117,11 @@ public class Card extends Applet {
 
             trustedRootCA = (ECPublicKey) KeyBuilder.buildKey(KeyBuilder.TYPE_EC_FP_PUBLIC, KeyBuilder.LENGTH_EC_FP_256, false);
             initCurve(trustedRootCA);
-            trustedRootCA.setW(ROOT_CA_BYTES, (short) 0, (short) ROOT_CA_BYTES.length);
+            trustedRootCA.setW(CurveConfig.ROOT_CA_BYTES, (short) 0, (short) CurveConfig.ROOT_CA_BYTES.length);
 
-            signer = Signature.getInstance(Signature.ALG_ECDSA_SHA_256, false);
+            signer   = Signature.getInstance(Signature.ALG_ECDSA_SHA_256, false);
             verifier = Signature.getInstance(Signature.ALG_ECDSA_SHA_256, false);
-            hasher = MessageDigest.getInstance(MessageDigest.ALG_SHA_256, false);
+            hasher   = MessageDigest.getInstance(MessageDigest.ALG_SHA_256, false);
         } catch (CryptoException e) {
             ISOException.throwIt(ISO7816.SW_FUNC_NOT_SUPPORTED);
             throw e;
@@ -187,21 +134,19 @@ public class Card extends Applet {
      * Configures the EC Curve parameters.
      */
     private void initCurve(ECKey key) {
-        key.setFieldFP(SECP256R1_P, (short)0, (short)SECP256R1_P.length);
-        key.setA(SECP256R1_A, (short)0, (short)SECP256R1_A.length);
-        key.setB(SECP256R1_B, (short)0, (short)SECP256R1_B.length);
-        key.setG(SECP256R1_G, (short)0, (short)SECP256R1_G.length);
-        key.setR(SECP256R1_R, (short)0, (short)SECP256R1_R.length);
-        key.setK(k);
+        key.setFieldFP(CurveConfig.SECP256R1_P, (short)0, (short)CurveConfig.SECP256R1_P.length);
+        key.setA(CurveConfig.SECP256R1_A, (short)0, (short)CurveConfig.SECP256R1_A.length);
+        key.setB(CurveConfig.SECP256R1_B, (short)0, (short)CurveConfig.SECP256R1_B.length);
+        key.setG(CurveConfig.SECP256R1_G, (short)0, (short)CurveConfig.SECP256R1_G.length);
+        key.setR(CurveConfig.SECP256R1_R, (short)0, (short)CurveConfig.SECP256R1_R.length);
+        key.setK(CurveConfig.k);
     }
 
     /**
      * Main APDU processing loop.
      */
     public void process(APDU apdu) {
-        if (selectingApplet()) {
-            return;
-        }
+        if (selectingApplet()) return;
 
         if (!setupDone) {
             doLazySetup();
@@ -213,44 +158,19 @@ public class Card extends Applet {
 
         try {
             switch (ins) {
-                case Constants.OP_GET_STATUS:
-                    processGetStatus(apdu);
-                    break;
-                case Constants.OP_VERIFY_PIN:
-                    verifyPin(apdu);
-                    break;
-                case Constants.OP_CHANGE_PIN:
-                    processChangePin(apdu);
-                    break;
-                case Constants.OP_GENESIS:
-                    processGenesis(apdu);
-                    break;
-                case Constants.OP_SEND:
-                    processSend(apdu);
-                    break;
-                case Constants.OP_RECEIVE:
-                    processReceive(apdu);
-                    break;
-                case Constants.OP_ADD_PEER:
-                    addPeer(apdu);
-                    break;
-                case Constants.OP_MINT:
-                    processMint(apdu);
-                    break;
-                case Constants.OP_BURN:
-                    processBurn(apdu);
-                    break;
-                case Constants.OP_GET_PUBKEY:
-                    getPublicKey(apdu);
-                    break;
-                case Constants.OP_GET_CERT:
-                    processGetCert(apdu);
-                    break;
-                case Constants.OP_SET_CERT:
-                    processSetCert(apdu);
-                    break;
-                default:
-                    ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
+                case Constants.OP_GET_STATUS:  processGetStatus(apdu);  break;
+                case Constants.OP_VERIFY_PIN:  verifyPin(apdu);         break;
+                case Constants.OP_CHANGE_PIN:  processChangePin(apdu);  break;
+                case Constants.OP_GENESIS:     processGenesis(apdu);    break;
+                case Constants.OP_SEND:        processSend(apdu);       break;
+                case Constants.OP_RECEIVE:     processReceive(apdu);    break;
+                case Constants.OP_ADD_PEER:    addPeer(apdu);           break;
+                case Constants.OP_MINT:        processMint(apdu);       break;
+                case Constants.OP_BURN:        processBurn(apdu);       break;
+                case Constants.OP_GET_PUBKEY:  getPublicKey(apdu);      break;
+                case Constants.OP_GET_CERT:    processGetCert(apdu);    break;
+                case Constants.OP_SET_CERT:    processSetCert(apdu);    break;
+                default: ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
             }
         } catch (ISOException e) {
             throw e;
@@ -282,11 +202,12 @@ public class Card extends Applet {
      */
     private void processGetStatus(APDU apdu) {
         byte[] buffer = apdu.getBuffer();
-        buffer[0] = isMinter ? (byte) 0x01 : (byte) 0x00;
-        buffer[1] = isPinSet ? (byte) 0x01 : (byte) 0x00;
+        buffer[0] = isMinter    ? (byte) 0x01 : (byte) 0x00;
+        buffer[1] = isPinSet    ? (byte) 0x01 : (byte) 0x00;
         buffer[2] = genesisDone ? (byte) 0x01 : (byte) 0x00;
         buffer[3] = ownerPin.getTriesRemaining();
-        apdu.setOutgoingAndSend((short)0, (short)4);
+        Util.arrayCopyNonAtomic(myId, (short)28, buffer, (short)4, (short)4);
+        apdu.setOutgoingAndSend((short)0, (short)8);
     }
 
     /**
@@ -294,28 +215,21 @@ public class Card extends Applet {
      */
     private void verifyPin(APDU apdu) {
         if (!isPinSet) ISOException.throwIt(Constants.SW_CONDITIONS_NOT_SATISFIED);
-
         byte[] buffer = apdu.getBuffer();
         short len = apdu.setIncomingAndReceive();
         if (len != Constants.PIN_SIZE) ISOException.throwIt(Constants.SW_WRONG_DATA);
-
         if (!ownerPin.check(buffer, ISO7816.OFFSET_CDATA, Constants.PIN_SIZE)) {
             ISOException.throwIt(Constants.SW_SECURITY_STATUS_NOT_SATISFIED);
         }
     }
 
-    /**
-     * Changes the user PIN.
-     */
     private void processChangePin(APDU apdu) {
         byte[] buffer = apdu.getBuffer();
         short len = apdu.setIncomingAndReceive();
-
         if (len != Constants.PIN_SIZE) ISOException.throwIt(Constants.SW_WRONG_DATA);
         if (isPinSet) {
             if (!ownerPin.isValidated()) ISOException.throwIt(Constants.SW_SECURITY_STATUS_NOT_SATISFIED);
         }
-
         ownerPin.update(buffer, ISO7816.OFFSET_CDATA, Constants.PIN_SIZE);
         isPinSet = true;
     }
@@ -339,21 +253,38 @@ public class Card extends Applet {
     /**
      * Helper to read transaction amount into mathA buffer.
      */
-    private void readAmountToMathA(APDU apdu) {
+    private void processSetCert(APDU apdu) {
+        if (isPinSet) checkPin();
+        if (certificateSet) ISOException.throwIt(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
+
         byte[] buffer = apdu.getBuffer();
         short len = apdu.setIncomingAndReceive();
+        if (len > (short)deviceCertificate.length) ISOException.throwIt(Constants.SW_FILE_FULL);
 
-        if (len < Constants.GOC_SIZE) ISOException.throwIt(Constants.SW_WRONG_DATA);
+        try {
+            verifier.init(trustedRootCA, Signature.MODE_VERIFY);
+            short myKeyLen = myPublicKey.getW(ramBuffer, (short)0);
+            if (!verifier.verify(ramBuffer, (short)0, myKeyLen, buffer, ISO7816.OFFSET_CDATA, len)) {
+                ISOException.throwIt(Constants.SW_SECURITY_STATUS_NOT_SATISFIED);
+            }
+        } catch (CryptoException e) {
+            ISOException.throwIt(ISO7816.SW_DATA_INVALID);
+        }
 
-        Util.arrayCopyNonAtomic(buffer, ISO7816.OFFSET_CDATA, mathA, (short)0, Constants.GOC_SIZE);
+        Util.arrayCopyNonAtomic(buffer, ISO7816.OFFSET_CDATA, deviceCertificate, (short)0, len);
+        certLength = len;
+        certificateSet = true;
+    }
 
-        if (MathLib.isZero(mathA)) ISOException.throwIt(Constants.SW_WRONG_DATA);
+    private void processGetCert(APDU apdu) {
+        if (certLength == 0) ISOException.throwIt(Constants.SW_CONDITIONS_NOT_SATISFIED);
+        byte[] buffer = apdu.getBuffer();
+        Util.arrayCopyNonAtomic(deviceCertificate, (short)0, buffer, (short)0, certLength);
+        apdu.setOutgoingAndSend((short)0, certLength);
     }
 
     private void checkGenesisDone() {
-        if (!genesisDone) {
-            ISOException.throwIt(Constants.SW_CONDITIONS_NOT_SATISFIED);
-        }
+        if (!genesisDone) ISOException.throwIt(Constants.SW_CONDITIONS_NOT_SATISFIED);
     }
 
     /**
@@ -365,43 +296,54 @@ public class Card extends Applet {
 
         JCSystem.beginTransaction();
         genesisDone = true;
-        short len = buildLogAndSign(Constants.OP_GENESIS, null, (short)0, null);
+        short respLen = signAndBuildResponse(Constants.OP_GENESIS, null, (short)0, Constants.LOG_GENESIS_SIZE);
         JCSystem.commitTransaction();
 
-        sendRamResponse(apdu, len);
+        sendRamResponse(apdu, respLen);
     }
 
     /**
      * Mints new currency (Minter only).
      */
     private void processMint(APDU apdu) {
-        checkPin();
-        checkGenesisDone();
         if (!isMinter) ISOException.throwIt(Constants.SW_SECURITY_STATUS_NOT_SATISFIED);
-
-        readAmountToMathA(apdu);
-
-        if (mathA[0] < 0) ISOException.throwIt(ISO7816.SW_DATA_INVALID);
-        if (MathLib.isZero(mathA)) ISOException.throwIt(ISO7816.SW_DATA_INVALID);
-        if (!MathLib.addSafe(totalCreated, mathA, mathRes)) ISOException.throwIt(Constants.SW_FILE_FULL);
-        commitAndLog(apdu, Constants.OP_MINT, mathRes);
+        processMintOrBurn(apdu, Constants.OP_MINT, totalCreated);
     }
 
     /**
      * Burns currency (removes from circulation).
      */
     private void processBurn(APDU apdu) {
+        processMintOrBurn(apdu, Constants.OP_BURN, totalBurned);
+    }
+
+    private void processMintOrBurn(APDU apdu, byte opType, byte[] targetTotalField) {
         checkPin();
         checkGenesisDone();
 
-        readAmountToMathA(apdu);
+        byte[] buffer = apdu.getBuffer();
+        short len = apdu.setIncomingAndReceive();
+        if (len < Constants.LONG_SIZE) ISOException.throwIt(Constants.SW_WRONG_DATA);
 
-        if (mathA[0] < 0) ISOException.throwIt(ISO7816.SW_DATA_INVALID);
+        Util.arrayCopyNonAtomic(buffer, ISO7816.OFFSET_CDATA, mathA, (short)0, Constants.LONG_SIZE);
         if (MathLib.isZero(mathA)) ISOException.throwIt(ISO7816.SW_DATA_INVALID);
-        calcBalance(totalCreated, totalReceived, totalBurned, totalSent, mathRes);
-        if (MathLib.compare(mathRes, mathA) < 0) ISOException.throwIt(Constants.SW_CONDITIONS_NOT_SATISFIED);
-        if (!MathLib.addSafe(totalBurned, mathA, mathRes)) ISOException.throwIt(Constants.SW_FILE_FULL);
-        commitAndLog(apdu, Constants.OP_BURN, mathRes);
+
+        if (opType == Constants.OP_MINT) {
+            if (!MathLib.add(balance, mathA, mathRes)) ISOException.throwIt(Constants.SW_FILE_FULL);
+        } else {
+            if (MathLib.compare(balance, mathA) < 0) ISOException.throwIt(Constants.SW_CONDITIONS_NOT_SATISFIED);
+            MathLib.subtract(balance, mathA, mathRes);
+        }
+
+        if (!MathLib.add(targetTotalField, mathA, mathB)) ISOException.throwIt(Constants.SW_FILE_FULL);
+
+        JCSystem.beginTransaction();
+        Util.arrayCopyNonAtomic(mathRes, (short)0, balance, (short)0, Constants.LONG_SIZE);
+        Util.arrayCopyNonAtomic(mathB, (short)0, targetTotalField, (short)0, Constants.LONG_SIZE);
+        short respLen = signAndBuildResponse(opType, mathB, Constants.LONG_SIZE, Constants.LOG_MINTBURN_SIZE);
+        JCSystem.commitTransaction();
+
+        sendRamResponse(apdu, respLen);
     }
 
     /**
@@ -413,35 +355,48 @@ public class Card extends Applet {
 
         byte[] buffer = apdu.getBuffer();
         short len = apdu.setIncomingAndReceive();
-        if (len < (short)(Constants.ID_SIZE + Constants.GOC_SIZE)) ISOException.throwIt(Constants.SW_WRONG_DATA);
+        if (len < Constants.APDU_SEND_SIZE) ISOException.throwIt(Constants.SW_WRONG_DATA);
 
-        short off = ISO7816.OFFSET_CDATA;
-        short targetIdOff = off;
-        off += Constants.ID_SIZE;
+        short targetPubkeyOff = ISO7816.OFFSET_CDATA;
+        short amountOff = (short)(targetPubkeyOff + Constants.PUBKEY_SIZE);
 
-        Util.arrayCopyNonAtomic(buffer, off, mathA, (short)0, Constants.GOC_SIZE);
-        if (mathA[0] < 0) ISOException.throwIt(ISO7816.SW_DATA_INVALID);
-        if (Util.arrayCompare(buffer, targetIdOff, myId, (short)0, Constants.ID_SIZE) == 0) ISOException.throwIt(Constants.SW_WRONG_DATA);
-        if (MathLib.isZero(mathA)) ISOException.throwIt(Constants.SW_WRONG_DATA);
+        Util.arrayCopyNonAtomic(buffer, amountOff, mathA, (short)0, Constants.LONG_SIZE);
+        if (MathLib.isZero(mathA)) ISOException.throwIt(ISO7816.SW_DATA_INVALID);
+        if (MathLib.compare(balance, mathA) < 0) ISOException.throwIt(Constants.SW_CONDITIONS_NOT_SATISFIED);
 
-        calcBalance(totalCreated, totalReceived, totalBurned, totalSent, mathRes);
-        if (MathLib.compare(mathRes, mathA) < 0) ISOException.throwIt(Constants.SW_CONDITIONS_NOT_SATISFIED);
-
-        short peerIdx = findPeer(buffer, targetIdOff);
+        short peerIdx = findPeer(buffer, targetPubkeyOff);
         if (peerIdx == -1) ISOException.throwIt(Constants.SW_CONDITIONS_NOT_SATISFIED);
-        if (!MathLib.addSafe(totalSent, mathA, mathRes)) ISOException.throwIt(Constants.SW_FILE_FULL);
-        short peerSentOff = getPeerOffset(peerIdx, Constants.CARD_PEER_OFFSET_SENT);
-        Util.arrayCopyNonAtomic(peerData, peerSentOff, mathB, (short)0, Constants.GOC_SIZE);
 
-        if (!MathLib.addSafe(mathB, mathA, mathB)) ISOException.throwIt(Constants.SW_FILE_FULL);
+        short peerSentOff = getPeerOffset(peerIdx, Constants.CARD_PEER_OFFSET_SENT);
+        Util.arrayCopyNonAtomic(peerData, peerSentOff, mathB, (short)0, Constants.LONG_SIZE);
+        if (!MathLib.add(mathB, mathA, mathB)) ISOException.throwIt(Constants.SW_FILE_FULL);
+
+        MathLib.subtract(balance, mathA, mathRes);
+
+        hasher.doFinal(buffer, targetPubkeyOff, Constants.PUBKEY_SIZE, ramBuffer, SCRATCH_OFF);
 
         JCSystem.beginTransaction();
-        Util.arrayCopyNonAtomic(mathRes, (short)0, totalSent, (short)0, Constants.GOC_SIZE);
-        Util.arrayCopyNonAtomic(mathB, (short)0, peerData, peerSentOff, Constants.GOC_SIZE);
-        short logLen = buildLogAndSign(Constants.OP_SEND, buffer, targetIdOff, mathB);
+        Util.arrayCopyNonAtomic(mathRes, (short)0, balance, (short)0, Constants.LONG_SIZE);
+        Util.arrayCopyNonAtomic(mathB, (short)0, peerData, peerSentOff, Constants.LONG_SIZE);
+
+        ramBuffer[Constants.LOG_OFFSET_TYPE] = Constants.OP_SEND;
+        Util.arrayCopyNonAtomic(myId, (short)0, ramBuffer, Constants.LOG_OFFSET_AUTHOR, Constants.ID_SIZE);
+        Util.arrayCopyNonAtomic(seqNumber, (short)0, ramBuffer, Constants.LOG_OFFSET_SEQ, Constants.LONG_SIZE);
+        Util.arrayCopyNonAtomic(ramBuffer, SCRATCH_OFF, ramBuffer, Constants.LOG_SEND_OFFSET_TARGET, Constants.ID_SIZE);
+        Util.arrayCopyNonAtomic(mathB, (short)0, ramBuffer, Constants.LOG_SEND_OFFSET_GOC, Constants.LONG_SIZE);
+
+        signer.init(myPrivateKey, Signature.MODE_SIGN);
+        short sigLen = signer.sign(ramBuffer, (short)0, Constants.LOG_SEND_SIZE, ramBuffer, Constants.LOG_SEND_SIZE);
+
+        Util.arrayCopyNonAtomic(seqNumber, (short)0, ramBuffer, RESP_OFF, Constants.LONG_SIZE);
+        Util.arrayCopyNonAtomic(ramBuffer, Constants.LOG_SEND_SIZE, ramBuffer, (short)(RESP_OFF + Constants.LONG_SIZE), sigLen);
+        short respLen = (short)(Constants.LONG_SIZE + sigLen);
+        Util.arrayCopyNonAtomic(ramBuffer, RESP_OFF, ramBuffer, (short)0, respLen);
+
+        MathLib.increment(seqNumber);
         JCSystem.commitTransaction();
 
-        sendRamResponse(apdu, logLen);
+        sendRamResponse(apdu, respLen);
     }
 
     /**
@@ -463,34 +418,48 @@ public class Card extends Applet {
         short sigOff = parseResult[0];
         short sigLen = parseResult[1];
 
-        short logOff = off;
-        if ((short)(len - (logOff - ISO7816.OFFSET_CDATA)) < Constants.LOG_PAYLOAD_SIZE) ISOException.throwIt(Constants.SW_WRONG_DATA);
-        short senderIdScratch = 100;
-        calculatePeerIdFromBytes(buffer, keyOff, keyLen, ramBuffer, senderIdScratch);
-        short peerIdx = findPeer(ramBuffer, senderIdScratch);
-        if (peerIdx == -1) ISOException.throwIt(Constants.SW_SECURITY_STATUS_NOT_SATISFIED);
-        if (buffer[(short)(logOff + Constants.LOG_OFFSET_TYPE)] != Constants.OP_SEND) ISOException.throwIt(Constants.SW_WRONG_DATA);
-        if (Util.arrayCompare(buffer, (short)(logOff + Constants.LOG_OFFSET_TARGET), myId, (short)0, Constants.ID_SIZE) != 0) {
-            ISOException.throwIt(Constants.SW_WRONG_DATA);
-        }
-        if (Util.arrayCompare(buffer, (short)(logOff + Constants.LOG_OFFSET_AUTHOR), ramBuffer, senderIdScratch, Constants.ID_SIZE) != 0) {
-            ISOException.throwIt(Constants.SW_WRONG_DATA);
-        }
-        Util.arrayCopyNonAtomic(buffer, (short)(logOff + Constants.LOG_OFFSET_GOC), mathA, (short)0, Constants.GOC_SIZE);
+        if (keyLen != Constants.PUBKEY_SIZE) ISOException.throwIt(Constants.SW_WRONG_DATA);
 
-        if (mathA[0] < 0) ISOException.throwIt(ISO7816.SW_DATA_INVALID);
+        short logOff = off;
+        if ((short)(len - (logOff - ISO7816.OFFSET_CDATA)) < Constants.LOG_SEND_SIZE) ISOException.throwIt(Constants.SW_WRONG_DATA);
+
+        if (buffer[logOff] != Constants.OP_SEND) ISOException.throwIt(Constants.SW_WRONG_DATA);
+
+        short peerIdx = findPeer(buffer, keyOff);
+        if (peerIdx == -1) ISOException.throwIt(Constants.SW_SECURITY_STATUS_NOT_SATISFIED);
+
+        hasher.doFinal(buffer, keyOff, keyLen, ramBuffer, SCRATCH_OFF);
+        if (Util.arrayCompare(buffer, (short)(logOff + Constants.LOG_OFFSET_AUTHOR), ramBuffer, SCRATCH_OFF, Constants.ID_SIZE) != 0) {
+            ISOException.throwIt(Constants.SW_WRONG_DATA);
+        }
+
+        if (Util.arrayCompare(buffer, (short)(logOff + Constants.LOG_SEND_OFFSET_TARGET), myId, (short)0, Constants.ID_SIZE) != 0) {
+            ISOException.throwIt(Constants.SW_WRONG_DATA);
+        }
+
+        Util.arrayCopyNonAtomic(buffer, (short)(logOff + Constants.LOG_SEND_OFFSET_GOC), mathA, (short)0, Constants.LONG_SIZE);
+
         short peerRecvOff = getPeerOffset(peerIdx, Constants.CARD_PEER_OFFSET_RECV);
-        Util.arrayCopyNonAtomic(peerData, peerRecvOff, mathB, (short)0, Constants.GOC_SIZE);
+        Util.arrayCopyNonAtomic(peerData, peerRecvOff, mathB, (short)0, Constants.LONG_SIZE);
+
         if (MathLib.compare(mathA, mathB) <= 0) ISOException.throwIt(Constants.SW_CONDITIONS_NOT_SATISFIED);
-        if (!verifySig(buffer, keyOff, keyLen, logOff, sigOff, sigLen)) {
+
+        try {
+            guestKey.setW(buffer, keyOff, keyLen);
+            verifier.init(guestKey, Signature.MODE_VERIFY);
+            if (!verifier.verify(buffer, logOff, Constants.LOG_SEND_SIZE, buffer, sigOff, sigLen)) {
+                ISOException.throwIt(Constants.SW_SECURITY_STATUS_NOT_SATISFIED);
+            }
+        } catch (CryptoException e) {
             ISOException.throwIt(Constants.SW_SECURITY_STATUS_NOT_SATISFIED);
         }
+
         MathLib.subtract(mathA, mathB, mathRes);
-        if (!MathLib.addSafe(totalReceived, mathRes, mathB)) ISOException.throwIt(Constants.SW_FILE_FULL);
+        if (!MathLib.add(balance, mathRes, mathB)) ISOException.throwIt(Constants.SW_FILE_FULL);
 
         JCSystem.beginTransaction();
-        Util.arrayCopyNonAtomic(mathB, (short)0, totalReceived, (short)0, Constants.GOC_SIZE);
-        Util.arrayCopyNonAtomic(mathA, (short)0, peerData, peerRecvOff, Constants.GOC_SIZE);
+        Util.arrayCopyNonAtomic(mathB, (short)0, balance, (short)0, Constants.LONG_SIZE);
+        Util.arrayCopyNonAtomic(mathA, (short)0, peerData, peerRecvOff, Constants.LONG_SIZE);
         JCSystem.commitTransaction();
     }
 
@@ -512,88 +481,58 @@ public class Card extends Applet {
         parseField(buffer, off);
         short keyOff = parseResult[0];
         short keyLen = parseResult[1];
-        short idScratch = 100;
-        calculatePeerIdFromBytes(buffer, keyOff, keyLen, ramBuffer, idScratch);
-        if (findPeer(ramBuffer, idScratch) != -1) return;
 
-        if (!verifyCertRaw(buffer, keyOff, keyLen, certOff, certLen)) {
+        if (keyLen != Constants.PUBKEY_SIZE) ISOException.throwIt(Constants.SW_WRONG_DATA);
+
+        hasher.doFinal(buffer, keyOff, Constants.PUBKEY_SIZE, ramBuffer, (short)0);
+        if (Util.arrayCompare(ramBuffer, (short)0, myId, (short)0, Constants.ID_SIZE) == 0) {
+            ISOException.throwIt(Constants.SW_WRONG_DATA);
+        }
+
+        if (findPeer(buffer, keyOff) != -1) return;
+
+        try {
+            verifier.init(trustedRootCA, Signature.MODE_VERIFY);
+            if (!verifier.verify(buffer, keyOff, keyLen, buffer, certOff, certLen)) {
+                ISOException.throwIt(Constants.SW_SECURITY_STATUS_NOT_SATISFIED);
+            }
+        } catch (CryptoException e) {
             ISOException.throwIt(Constants.SW_SECURITY_STATUS_NOT_SATISFIED);
         }
 
         if (peerCount >= Constants.CARD_MAX_PEERS) ISOException.throwIt(Constants.SW_FILE_FULL);
 
         JCSystem.beginTransaction();
-        short peerStart = getPeerOffset(peerCount, Constants.CARD_PEER_OFFSET_ID);
-        Util.arrayCopyNonAtomic(ramBuffer, idScratch, peerData, peerStart, Constants.ID_SIZE);
+        short peerStart = getPeerOffset(peerCount, Constants.CARD_PEER_OFFSET_KEY);
+        Util.arrayCopyNonAtomic(buffer, keyOff, peerData, peerStart, Constants.PUBKEY_SIZE);
         peerCount++;
         JCSystem.commitTransaction();
     }
 
     /**
-     * Stores the device certificate.
-     */
-    private void processSetCert(APDU apdu) {
-        if (isPinSet) checkPin();
-        if (certificateSet) ISOException.throwIt(ISO7816.SW_CONDITIONS_NOT_SATISFIED);
-
-        byte[] buffer = apdu.getBuffer();
-        short len = apdu.setIncomingAndReceive();
-        if (len > (short)deviceCertificate.length) ISOException.throwIt(Constants.SW_FILE_FULL);
-
-        try {
-            verifier.init(trustedRootCA, Signature.MODE_VERIFY);
-            short myKeyLen = myPublicKey.getW(ramBuffer, (short)0);
-
-            boolean isValid = verifier.verify(ramBuffer, (short)0, myKeyLen, buffer, ISO7816.OFFSET_CDATA, len);
-            if (!isValid) ISOException.throwIt(Constants.SW_SECURITY_STATUS_NOT_SATISFIED);
-        } catch (CryptoException e) {
-            ISOException.throwIt(ISO7816.SW_DATA_INVALID);
-        }
-        Util.arrayCopyNonAtomic(buffer, ISO7816.OFFSET_CDATA, deviceCertificate, (short)0, len);
-        certLength = len;
-        certificateSet = true;
-    }
-
-    /**
      * Retrieves the device certificate.
      */
-    private void processGetCert(APDU apdu) {
-        if (certLength == 0) ISOException.throwIt(Constants.SW_CONDITIONS_NOT_SATISFIED);
-        byte[] buffer = apdu.getBuffer();
-        Util.arrayCopyNonAtomic(deviceCertificate, (short)0, buffer, (short)0, certLength);
-        apdu.setOutgoingAndSend((short)0, certLength);
-    }
+    private short signAndBuildResponse(byte type, byte[] extraData, short extraLen, short totalLogSize) {
+        ramBuffer[Constants.LOG_OFFSET_TYPE] = type;
+        Util.arrayCopyNonAtomic(myId, (short)0, ramBuffer, Constants.LOG_OFFSET_AUTHOR, Constants.ID_SIZE);
+        Util.arrayCopyNonAtomic(seqNumber, (short)0, ramBuffer, Constants.LOG_OFFSET_SEQ, Constants.LONG_SIZE);
 
-    /**
-     * Helper to construct and sign the log entry.
-     */
-    private short buildLogAndSign(byte type, byte[] targetIdSource, short targetIdOff, byte[] valSource) {
-        short off = 0;
-
-        off = Util.arrayCopyNonAtomic(seqNumber, (short)0, ramBuffer, off, Constants.GOC_SIZE);
-        off = Util.arrayCopyNonAtomic(lastSignedHash, (short)0, ramBuffer, off, Constants.HASH_SIZE);
-        ramBuffer[off++] = type;
-        off = Util.arrayCopyNonAtomic(myId, (short)0, ramBuffer, off, Constants.ID_SIZE);
-
-        if (targetIdSource != null) {
-            off = Util.arrayCopyNonAtomic(targetIdSource, targetIdOff, ramBuffer, off, Constants.ID_SIZE);
-        } else {
-            off = Util.arrayFillNonAtomic(ramBuffer, off, Constants.ID_SIZE, (byte)0);
+        if (extraData != null && extraLen > 0) {
+            Util.arrayCopyNonAtomic(extraData, (short)0, ramBuffer, Constants.LOG_HEADER_SIZE, extraLen);
         }
-
-        if (valSource != null) {
-            Util.arrayCopyNonAtomic(valSource, (short) 0, ramBuffer, off, Constants.GOC_SIZE);
-        } else {
-            Util.arrayFillNonAtomic(ramBuffer, off, Constants.GOC_SIZE, (byte) 0);
-        }
-
-        hasher.doFinal(ramBuffer, (short)0, Constants.LOG_PAYLOAD_SIZE, lastSignedHash, (short)0);
-        MathLib.increment(seqNumber);
 
         signer.init(myPrivateKey, Signature.MODE_SIGN);
-        short sigLen = signer.sign(ramBuffer, (short)0, Constants.LOG_PAYLOAD_SIZE, ramBuffer, Constants.LOG_PAYLOAD_SIZE);
+        short sigLen = signer.sign(ramBuffer, (short)0, totalLogSize, ramBuffer, totalLogSize);
 
-        return (short)(Constants.LOG_PAYLOAD_SIZE + sigLen);
+        Util.arrayCopyNonAtomic(seqNumber, (short)0, ramBuffer, RESP_OFF, Constants.LONG_SIZE);
+        Util.arrayCopyNonAtomic(ramBuffer, totalLogSize, ramBuffer, (short)(RESP_OFF + Constants.LONG_SIZE), sigLen);
+        short respLen = (short)(Constants.LONG_SIZE + sigLen);
+
+        Util.arrayCopyNonAtomic(ramBuffer, RESP_OFF, ramBuffer, (short)0, respLen);
+
+        MathLib.increment(seqNumber);
+
+        return respLen;
     }
 
     /**
@@ -615,14 +554,13 @@ public class Card extends Applet {
     }
 
     /**
-     * Finds a peer index by ID.
+     * Finds peer by comparing full 65-byte public keys.
+     * @return peer index or -1
      */
     private short findPeer(byte[] buf, short off) {
-        for (short i=0; i<peerCount; i++) {
-            short pOff = getPeerOffset(i, Constants.CARD_PEER_OFFSET_ID);
-            if (Util.arrayCompare(peerData, pOff, buf, off, Constants.ID_SIZE) == 0) {
-                return i;
-            }
+        for (short i = 0; i < peerCount; i++) {
+            short pOff = getPeerOffset(i, Constants.CARD_PEER_OFFSET_KEY);
+            if (Util.arrayCompare(peerData, pOff, buf, off, Constants.PUBKEY_SIZE) == 0) return i;
         }
         return -1;
     }
@@ -630,75 +568,9 @@ public class Card extends Applet {
     /**
      * Persists changes and generates a log.
      */
-    private void commitAndLog(APDU apdu, byte opType, byte[] newValue) {
-        JCSystem.beginTransaction();
-
-        if (opType == Constants.OP_MINT) Util.arrayCopyNonAtomic(newValue, (short)0, totalCreated, (short)0, Constants.GOC_SIZE);
-        if (opType == Constants.OP_BURN) Util.arrayCopyNonAtomic(newValue, (short)0, totalBurned, (short)0, Constants.GOC_SIZE);
-
-        short len = buildLogAndSign(opType, null, (short)0, newValue);
-
-        JCSystem.commitTransaction();
-
-        sendRamResponse(apdu, len);
-    }
-
-    /**
-     * Sends RAM buffer content as APDU response.
-     */
     private void sendRamResponse(APDU apdu, short len) {
         byte[] buffer = apdu.getBuffer();
         Util.arrayCopyNonAtomic(ramBuffer, (short)0, buffer, (short)0, len);
         apdu.setOutgoingAndSend((short)0, len);
-    }
-
-    /**
-     * Calculates Balance = (Created + Received) - (Burned + Sent).
-     */
-    private void calcBalance(byte[] cre, byte[] rec, byte[] burn, byte[] sent, byte[] res) {
-        if (!MathLib.addSafe(cre, rec, mathT1)) {
-            Util.arrayFillNonAtomic(mathT1, (short)0, Constants.GOC_SIZE, (byte)0xFF);
-            mathT1[0] = (byte)0x7F;
-        }
-
-        if (!MathLib.addSafe(burn, sent, mathT2)) {
-            Util.arrayFillNonAtomic(mathT2, (short)0, Constants.GOC_SIZE, (byte)0xFF);
-            mathT2[0] = (byte)0x7F;
-        }
-
-        MathLib.subtract(mathT1, mathT2, res);
-    }
-
-    /**
-     * Calculates the Peer ID (Hash of Public Key).
-     */
-    private void calculatePeerIdFromBytes(byte[] keyBuf, short keyOff, short keyLen, byte[] destIdBuf, short destIdOff) {
-        hasher.doFinal(keyBuf, keyOff, keyLen, ramBuffer, (short)0);
-        Util.arrayCopyNonAtomic(ramBuffer, (short)0, destIdBuf, destIdOff, Constants.ID_SIZE);
-    }
-
-    /**
-     * Verifies a signature.
-     */
-    private boolean verifySig(byte[] buf, short kOff, short kLen, short dOff, short sOff, short sLen) {
-        try {
-            guestKey.setW(buf, kOff, kLen);
-            verifier.init(guestKey, Signature.MODE_VERIFY);
-            return verifier.verify(buf, dOff, Constants.LOG_PAYLOAD_SIZE, buf, sOff, sLen);
-        } catch (CryptoException e) {
-            return false;
-        }
-    }
-
-    /**
-     * Verifies the device certificate against Root CA.
-     */
-    private boolean verifyCertRaw(byte[] buf, short kOff, short kLen, short cOff, short cLen) {
-        try {
-            verifier.init(trustedRootCA, Signature.MODE_VERIFY);
-            return verifier.verify(buf, kOff, kLen, buf, cOff, cLen);
-        } catch (CryptoException e) {
-            return false;
-        }
     }
 }

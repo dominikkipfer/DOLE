@@ -7,17 +7,22 @@ import dole.Constants
 import java.io.IOException
 import java.nio.ByteBuffer
 
-class AndroidSmartCard(tag: Tag?) : SmartCard {
-    private val isoDep: IsoDep = IsoDep.get(tag) ?: throw IOException(Constants.ERR_CARD_NOT_FOUND)
+class AndroidSmartCard(var tag: Tag? = null) : SmartCard {
+
+    private var isoDep: IsoDep? = null
     private var isConnectedInternal = false
 
-    override val isConnected: Boolean get() = isConnectedInternal && isoDep.isConnected
+    override val isConnected: Boolean get() = isConnectedInternal && isoDep?.isConnected == true
 
     override fun connect() {
-        if (!isoDep.isConnected) {
+        val currentTag = tag ?: throw IOException(Constants.ERR_CARD_NOT_FOUND)
+
+        isoDep = IsoDep.get(currentTag) ?: throw IOException(Constants.ERR_CARD_NOT_FOUND)
+
+        if (isoDep?.isConnected != true) {
             try {
-                isoDep.connect()
-                isoDep.timeout = 5000
+                isoDep?.connect()
+                isoDep?.timeout = 5000
             } catch (_: IOException) {
                 throw IOException(Constants.ERR_CARD_NOT_FOUND)
             }
@@ -33,21 +38,27 @@ class AndroidSmartCard(tag: Tag?) : SmartCard {
 
     override fun disconnect() {
         try {
-            if (isoDep.isConnected) isoDep.close()
+            if (isoDep?.isConnected == true) isoDep?.close()
         } catch (e: IOException) {
             Log.w("AndroidSmartCard", "Error closing IsoDep", e)
         }
         isConnectedInternal = false
+        isoDep = null
     }
 
     private fun selectApplet() {
         val command = buildApdu(0x00, 0xA4, 0x04, Constants.APPLET_AID_BYTES)
-        checkStatusWord(isoDep.transceive(command))
+        checkStatusWord(transmitRaw(command))
+    }
+
+    private fun transmitRaw(command: ByteArray): ByteArray {
+        val dep = isoDep ?: throw IOException(Constants.ERR_CARD_NOT_FOUND)
+        return dep.transceive(command)
     }
 
     private fun transmit(ins: Int, data: ByteArray?): ByteArray {
         if (!isConnected) throw IOException(Constants.ERR_CARD_NOT_FOUND)
-        val response = isoDep.transceive(buildApdu(Constants.CLA_PROPRIETARY, ins, 0x00, data))
+        val response = transmitRaw(buildApdu(Constants.CLA_PROPRIETARY, ins, 0x00, data))
         checkStatusWord(response)
         return if (response.size > 2) response.copyOf(response.size - 2) else ByteArray(0)
     }

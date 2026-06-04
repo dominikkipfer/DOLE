@@ -1,100 +1,116 @@
 package card;
 
+import dole.Constants;
+
 /**
- * Helper class for 32-bit (4-byte) arithmetic on Java Card.
+ * Unsigned 64-bit integer math for J3R180 (Java Card 3.0.5 with int support).
+ * Operates on 8-byte big-endian arrays. HIGH = Bytes 0-3, LOW = Bytes 4-7.
  */
 public class MathLib {
 
     private MathLib() {}
 
-    /**
-     * Adds two 4-byte arrays (big-endian).
-     * Stores the result in res.
-     * @return false on overflow (if result > 2^31-1), otherwise true.
-     */
-    public static boolean addSafe(byte[] a, byte[] b, byte[] res) {
-        short carry = 0;
-        for (short i = 3; i >= 0; i--) {
-            short vA = (short)(a[i] & 0xFF);
-            short vB = (short)(b[i] & 0xFF);
+    private static int getInt(byte[] b, short off) {
+        return ((b[off] & 0xFF) << 24)
+                | ((b[(short)(off + 1)] & 0xFF) << 16)
+                | ((b[(short)(off + 2)] & 0xFF) << 8)
+                | (b[(short)(off + 3)] & 0xFF);
+    }
 
-            short val = (short)(vA + vB + carry);
-
-            res[i] = (byte) val;
-
-            if (val > 255) {
-                carry = 1;
-            } else {
-                carry = 0;
-            }
-        }
-        return (carry == 0) && ((res[0] & 0x80) == 0);
+    private static void setInt(byte[] b, short off, int val) {
+        b[off] = (byte)(val >>> 24);
+        b[(short)(off + 1)] = (byte)(val >>> 16);
+        b[(short)(off + 2)] = (byte)(val >>> 8);
+        b[(short)(off + 3)] = (byte)val;
     }
 
     /**
-     * Subtracts b from a (a - b).
-     * Stores the result in res.
-     * Assumes a >= b (no negative results).
+     * Unsigned 32-bit comparison.
+     * @return true if a > b (unsigned)
+     */
+    private static boolean uintGt(int a, int b) {
+        return (a ^ 0x80000000) > (b ^ 0x80000000);
+    }
+
+    /**
+     * Adds a + b (unsigned 64-bit), result in res. Safe when res aliases a or b.
+     * @return false on overflow past 2^64
+     */
+    public static boolean add(byte[] a, byte[] b, byte[] res) {
+        int aLow  = getInt(a, (short)4);
+        int bLow  = getInt(b, (short)4);
+        int aHigh = getInt(a, (short)0);
+        int bHigh = getInt(b, (short)0);
+
+        int resLow = aLow + bLow;
+        int carry = uintGt(aLow, resLow) ? 1 : 0;
+
+        int sumHigh = aHigh + bHigh;
+        int resHigh = sumHigh + carry;
+        boolean overflow = uintGt(aHigh, sumHigh) || uintGt(sumHigh, resHigh);
+
+        setInt(res, (short)4, resLow);
+        setInt(res, (short)0, resHigh);
+
+        return !overflow;
+    }
+
+    /**
+     * Subtracts b from a (a - b), result in res. Precondition: a >= b.
+     * Safe when res aliases a or b.
      */
     public static void subtract(byte[] a, byte[] b, byte[] res) {
-        short borrow = 0;
-        for (short i = 3; i >= 0; i--) {
-            short vA = (short)(a[i] & 0xFF);
-            short vB = (short)(b[i] & 0xFF);
+        int aLow  = getInt(a, (short)4);
+        int bLow  = getInt(b, (short)4);
+        int aHigh = getInt(a, (short)0);
+        int bHigh = getInt(b, (short)0);
 
-            short diff = (short)(vA - vB);
-            diff = (short)(diff - borrow);
+        int resLow = aLow - bLow;
+        int borrow = uintGt(bLow, aLow) ? 1 : 0;
+        int resHigh = aHigh - bHigh - borrow;
 
-            if (diff < 0) {
-                diff = (short)(diff + (short)256);
-                borrow = 1;
-            } else {
-                borrow = 0;
-            }
-            res[i] = (byte) diff;
-        }
+        setInt(res, (short)4, resLow);
+        setInt(res, (short)0, resHigh);
     }
 
     /**
-     * Compares two 4-byte arrays (big-endian).
-     * @return 1 if a > b, -1 if a < b, 0 if equal.
+     * Unsigned comparison of two 8-byte arrays.
+     * @return 1 if a > b, -1 if a < b, 0 if equal
      */
     public static short compare(byte[] a, byte[] b) {
-        for (short i=0; i<4; i++) {
-            short vA = (short)(a[i] & 0xFF);
-            short vB = (short)(b[i] & 0xFF);
+        int aHigh = getInt(a, (short)0);
+        int bHigh = getInt(b, (short)0);
 
-            if (vA > vB) return 1;
-            if (vA < vB) return -1;
-        }
+        if (uintGt(aHigh, bHigh)) return 1;
+        if (uintGt(bHigh, aHigh)) return -1;
+
+        int aLow = getInt(a, (short)4);
+        int bLow = getInt(b, (short)4);
+
+        if (uintGt(aLow, bLow)) return 1;
+        if (uintGt(bLow, aLow)) return -1;
+
         return 0;
     }
 
     /**
-     * Checks whether the provided 4-byte big-endian array represents zero.
-     * @param a a 4-byte big-endian array
-     * @return true if all four bytes are zero, false otherwise
+     * @return true if all 8 bytes are zero
      */
     public static boolean isZero(byte[] a) {
-        for (short i=0; i<4; i++) {
+        for (short i = 0; i < Constants.LONG_SIZE; i++) {
             if (a[i] != 0) return false;
         }
         return true;
     }
 
     /**
-     * Increments a 4-byte big-endian array by one in-place.
-     * The array is treated as an unsigned 32-bit integer.
-     * If the increment carries past the most significant byte, the carry
-     * is propagated and the array may wrap to zero.
-     * @param a a 4-byte big-endian array to increment
+     * Increments 8-byte unsigned integer by one in-place. Wraps on overflow.
      */
     public static void increment(byte[] a) {
-        for (short i = 3; i >= 0; i--) {
-            byte val = a[i];
-            a[i] = (byte)(val + 1);
-
-            if (a[i] != 0) return;
+        int low = getInt(a, (short)4) + 1;
+        setInt(a, (short)4, low);
+        if (low == 0) {
+            setInt(a, (short)0, getInt(a, (short)0) + 1);
         }
     }
 }

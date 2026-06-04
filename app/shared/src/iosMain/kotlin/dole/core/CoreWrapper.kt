@@ -1,29 +1,38 @@
 @file:Suppress("EXPECT_ACTUAL_CLASSIFIERS_ARE_IN_BETA_WARNING")
 package dole.core
 
+var swiftInitAction: ((UIStateListener, String) -> Unit)? = null
+var swiftMintAction: ((Int) -> Unit)? = null
+var swiftBurnAction: ((Int) -> Unit)? = null
+var swiftSendAction: ((String, Int) -> Unit)? = null
+
+var swiftBytesToHexAction: ((ByteArray) -> String)? = null
+var swiftHexToBytesAction: ((String) -> ByteArray)? = null
+var swiftSha256Action: ((ByteArray) -> ByteArray)? = null
+var swiftGetPersonIdAsHexAction: ((ByteArray) -> String)? = null
+
 actual object CoreWrapper {
-    private var engine: PrototypeEngine? = null
-    private var activeListener: LedgerStateListener? = null
 
-    actual fun initPrototype(listener: UIStateListener, storagePath: String) {
-        activeListener = object : LedgerStateListener {
-            override fun onStateUpdated(balance: Int, transactionHistoryJson: String) {
-                listener.onStateUpdated(balance, transactionHistoryJson)
-            }
-        }
+	actual fun initPrototype(listener: UIStateListener, storagePath: String) {
+		swiftInitAction?.invoke(listener, storagePath)
+	}
+	actual fun mint(amount: Int) { swiftMintAction?.invoke(amount) }
+	actual fun burn(amount: Int) { swiftBurnAction?.invoke(amount) }
+	actual fun send(targetPubKey: String, amount: Int) { swiftSendAction?.invoke(targetPubKey, amount) }
 
-        engine = PrototypeEngine.initPrototype(activeListener!!, storagePath)
-    }
+	actual fun bytesToHex(bytes: ByteArray): String {
+		return swiftBytesToHexAction?.invoke(bytes) ?: ""
+	}
 
-    actual fun mint(amount: Int) {
-        engine?.mint(amount)
-    }
+	actual fun hexToBytes(s: String): ByteArray {
+		return swiftHexToBytesAction?.invoke(s) ?: ByteArray(0)
+	}
 
-    actual fun burn(amount: Int) {
-        engine?.burn(amount)
-    }
+	actual fun sha256(input: ByteArray): ByteArray {
+		return swiftSha256Action?.invoke(input) ?: ByteArray(0)
+	}
 
-    actual fun send(targetPubKey: String, amount: Int) {
-        engine?.send(targetPubKey, amount)
-    }
+	actual fun getPersonIdAsHex(pubKey: ByteArray): String {
+		return swiftGetPersonIdAsHexAction?.invoke(pubKey) ?: ""
+	}
 }

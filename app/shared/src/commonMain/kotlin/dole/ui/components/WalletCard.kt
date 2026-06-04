@@ -32,11 +32,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import dole.data.models.StoredAccount
 
 val LocalCardPulse = compositionLocalOf { 0f }
@@ -75,9 +76,10 @@ fun WalletCard(
         val edgePaddingBottom = 18.dp * scaleFactor
         val edgeLandscapeInset = 8.dp * scaleFactor
 
-        val nameFontSize = 15.sp * scaleFactor
-        val idFontSize = 9.sp * scaleFactor
-        val idLetterSpacing = 1.5.sp * scaleFactor
+        val density = LocalDensity.current
+        val nameFontSize = with(density) { (15.dp * scaleFactor).toSp() }
+        val idFontSize = with(density) { (9.dp * scaleFactor).toSp() }
+        val idLetterSpacing = with(density) { (1.5.dp * scaleFactor).toSp() }
 
         val cardCornerRadius = 14.dp * scaleFactor
         val cardShape = RoundedCornerShape(cardCornerRadius)
@@ -290,11 +292,15 @@ fun BoxScope.CardChip(scaleFactor: Float) {
 
 @Composable
 fun BoxScope.CardName(name: String, scaleFactor: Float) {
+    val density = LocalDensity.current
+    val fontSize = with(density) { (15.dp * scaleFactor).toSp() }
+
     Text(
         text = name,
         color = Color.Black.copy(alpha = 0.8f),
         fontWeight = FontWeight.Bold,
-        fontSize = 15.sp * scaleFactor,
+        fontSize = fontSize,
+        style = TextStyle(lineHeight = fontSize),
         maxLines = 1,
         modifier = Modifier.align(Alignment.TopStart).padding(top = 20.dp * scaleFactor, start = 20.dp * scaleFactor)
     )
@@ -303,12 +309,17 @@ fun BoxScope.CardName(name: String, scaleFactor: Float) {
 @Composable
 fun BoxScope.CardId(account: StoredAccount, showFullId: Boolean, scaleFactor: Float, onIdClick: (() -> Unit)?) {
     val idText = if (showFullId) account.id else "•••• ${account.id.takeLast(4)}"
+    val density = LocalDensity.current
+    val fontSize = with(density) { (9.dp * scaleFactor).toSp() }
+    val letterSpacing = with(density) { (1.5.dp * scaleFactor).toSp() }
+
     Text(
         text = idText,
         color = Color.Black.copy(alpha = 0.6f),
-        fontSize = 9.sp * scaleFactor,
+        fontSize = fontSize,
         fontWeight = FontWeight.Medium,
-        letterSpacing = 1.5.sp * scaleFactor,
+        letterSpacing = letterSpacing,
+        style = TextStyle(lineHeight = fontSize),
         modifier = Modifier
             .align(Alignment.BottomStart)
             .padding(bottom = 18.dp * scaleFactor, start = 20.dp * scaleFactor)
@@ -353,6 +364,7 @@ private fun EdgeLabelTexts(
         color = Color.Black.copy(alpha = 0.8f),
         fontWeight = FontWeight.Bold,
         fontSize = dynamicFontSize,
+        style = TextStyle(lineHeight = dynamicFontSize),
         maxLines = 1
     )
     Text(
@@ -360,7 +372,8 @@ private fun EdgeLabelTexts(
         color = Color.Black.copy(alpha = 0.6f),
         fontWeight = FontWeight.Medium,
         fontSize = idFontSize,
-        letterSpacing = idLetterSpacing
+        letterSpacing = idLetterSpacing,
+        style = TextStyle(lineHeight = idFontSize)
     )
 }
 

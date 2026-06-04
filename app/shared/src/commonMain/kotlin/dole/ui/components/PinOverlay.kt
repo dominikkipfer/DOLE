@@ -16,14 +16,22 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dole.ui.metrics.CardLayoutMetrics
 
 @Composable
-fun PinOverlay(title: String, pinLength: Int, isError: Boolean, shakeOffset: Float, metrics: CardLayoutMetrics) {
-    val defaultColor = MaterialTheme.colorScheme.onBackground
+fun PinOverlay(
+    title: String,
+    pinLength: Int,
+    isError: Boolean,
+    shakeOffset: Float,
+    metrics: CardLayoutMetrics,
+    hideDots: Boolean = false
+) {
+    val defaultColor = Color.Black
     val errorColor = MaterialTheme.colorScheme.error
 
     val contentColor = if (isError) errorColor else defaultColor
@@ -42,18 +50,21 @@ fun PinOverlay(title: String, pinLength: Int, isError: Boolean, shakeOffset: Flo
             letterSpacing = 2.sp
         )
 
-        Spacer(Modifier.height(metrics.overlaySpacing))
+        if (!hideDots) {
+            Spacer(Modifier.height(metrics.overlaySpacing))
 
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(metrics.overlayDotSize),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            repeat(4) { i ->
-                Box(
-                    modifier = Modifier.size(metrics.overlayDotSize).background(
-                        if (i < pinLength) contentColor else contentColor.copy(alpha = 0.2f), CircleShape
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(metrics.overlayDotSize),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                repeat(4) { i ->
+                    Box(
+                        modifier = Modifier.size(metrics.overlayDotSize).background(
+                            color = if (i < pinLength) contentColor else contentColor.copy(alpha = 0.2f),
+                            shape = CircleShape
+                        )
                     )
-                )
+                }
             }
         }
     }

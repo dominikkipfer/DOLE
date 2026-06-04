@@ -16,8 +16,10 @@ kotlin {
 }
 
 dependencies {
+    implementation(libs.androidx.fragment.ktx)
     implementation(projects.app.shared)
     implementation(libs.androidx.activity.compose)
+    implementation(libs.multiplatform.settings)
 }
 
 android {

@@ -5,34 +5,41 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.interop.UIKitView
 import kotlinx.cinterop.ExperimentalForeignApi
-import platform.UIKit.UIButton
-import platform.UIKit.UIButtonTypeCustom
-import platform.UIKit.UIButtonTypeSystem
-import platform.UIKit.UIControlStateNormal
-import platform.UIKit.UIColor
 import platform.UIKit.UIAction
+import platform.UIKit.UIButton
+import platform.UIKit.UIButtonConfiguration
+import platform.UIKit.UIButtonTypeSystem
+import platform.UIKit.UIColor
 import platform.UIKit.UIControlEventTouchUpInside
-
-private fun Color.toUIColor(): UIColor {
-    return UIColor(
-        red = this.red.toDouble(),
-        green = this.green.toDouble(),
-        blue = this.blue.toDouble(),
-        alpha = this.alpha.toDouble()
-    )
-}
+import platform.UIKit.UIControlStateNormal
 
 @OptIn(ExperimentalForeignApi::class)
 @Composable
-actual fun AppButton(text: String, onClick: () -> Unit, modifier: Modifier, backgroundColor: Color, textColor: Color) {
+actual fun AppButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier,
+    backgroundColor: Color,
+    textColor: Color
+) {
     UIKitView(
         factory = {
-            val button = UIButton.buttonWithType(UIButtonTypeCustom)
-            button.layer.cornerRadius = 8.0
-            button.clipsToBounds = true
+            val button = UIButton()
+            val config = UIButtonConfiguration.tintedButtonConfiguration()
 
-            button.backgroundColor = backgroundColor.toUIColor()
-            button.setTitleColor(textColor.toUIColor(), UIControlStateNormal)
+            config.baseBackgroundColor = UIColor(
+                red = backgroundColor.red.toDouble(),
+                green = backgroundColor.green.toDouble(),
+                blue = backgroundColor.blue.toDouble(),
+                alpha = backgroundColor.alpha.toDouble()
+            )
+            config.baseForegroundColor = UIColor(
+                red = textColor.red.toDouble(),
+                green = textColor.green.toDouble(),
+                blue = textColor.blue.toDouble(),
+                alpha = textColor.alpha.toDouble()
+            )
+            button.configuration = config
 
             val action = UIAction.actionWithHandler { _ -> onClick() }
             button.addAction(action, forControlEvents = UIControlEventTouchUpInside)
@@ -40,9 +47,21 @@ actual fun AppButton(text: String, onClick: () -> Unit, modifier: Modifier, back
             button
         },
         update = { button ->
-            button.setTitle(text, UIControlStateNormal)
-            button.backgroundColor = backgroundColor.toUIColor()
-            button.setTitleColor(textColor.toUIColor(), UIControlStateNormal)
+            val config = button.configuration ?: UIButtonConfiguration.tintedButtonConfiguration()
+            config.title = text
+            config.baseBackgroundColor = UIColor(
+                red = backgroundColor.red.toDouble(),
+                green = backgroundColor.green.toDouble(),
+                blue = backgroundColor.blue.toDouble(),
+                alpha = backgroundColor.alpha.toDouble()
+            )
+            config.baseForegroundColor = UIColor(
+                red = textColor.red.toDouble(),
+                green = textColor.green.toDouble(),
+                blue = textColor.blue.toDouble(),
+                alpha = textColor.alpha.toDouble()
+            )
+            button.configuration = config
         },
         modifier = modifier
     )
@@ -50,20 +69,35 @@ actual fun AppButton(text: String, onClick: () -> Unit, modifier: Modifier, back
 
 @OptIn(ExperimentalForeignApi::class)
 @Composable
-actual fun AppTextButton(text: String, onClick: () -> Unit, modifier: Modifier, textColor: Color) {
+actual fun AppTextButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier,
+    textColor: Color
+) {
     UIKitView(
         factory = {
             val button = UIButton.buttonWithType(UIButtonTypeSystem)
-            button.setTitleColor(textColor.toUIColor(), UIControlStateNormal)
-
+            val uiColor = UIColor(
+                red = textColor.red.toDouble(),
+                green = textColor.green.toDouble(),
+                blue = textColor.blue.toDouble(),
+                alpha = textColor.alpha.toDouble()
+            )
+            button.setTitleColor(uiColor, UIControlStateNormal)
             val action = UIAction.actionWithHandler { _ -> onClick() }
             button.addAction(action, forControlEvents = UIControlEventTouchUpInside)
-
             button
         },
         update = { button ->
+            val uiColor = UIColor(
+                red = textColor.red.toDouble(),
+                green = textColor.green.toDouble(),
+                blue = textColor.blue.toDouble(),
+                alpha = textColor.alpha.toDouble()
+            )
             button.setTitle(text, UIControlStateNormal)
-            button.setTitleColor(textColor.toUIColor(), UIControlStateNormal)
+            button.setTitleColor(uiColor, UIControlStateNormal)
         },
         modifier = modifier
     )
@@ -71,29 +105,77 @@ actual fun AppTextButton(text: String, onClick: () -> Unit, modifier: Modifier, 
 
 @OptIn(ExperimentalForeignApi::class)
 @Composable
-actual fun AppOutlinedButton(text: String, onClick: () -> Unit, modifier: Modifier, textColor: Color) {
+actual fun AppOutlinedButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier,
+    textColor: Color
+) {
     UIKitView(
         factory = {
             val button = UIButton.buttonWithType(UIButtonTypeSystem)
             button.layer.borderWidth = 1.0
             button.layer.cornerRadius = 12.0
 
-            @Suppress("MISSING_DEPENDENCY_CLASS")
-            button.layer.borderColor = textColor.toUIColor().CGColor
-            button.setTitleColor(textColor.toUIColor(), UIControlStateNormal)
+            val uiColor = UIColor(
+                red = textColor.red.toDouble(),
+                green = textColor.green.toDouble(),
+                blue = textColor.blue.toDouble(),
+                alpha = textColor.alpha.toDouble()
+            )
+            button.layer.borderColor = uiColor.CGColor
+            button.setTitleColor(uiColor, UIControlStateNormal)
 
             val action = UIAction.actionWithHandler { _ -> onClick() }
             button.addAction(action, forControlEvents = UIControlEventTouchUpInside)
-
             button
         },
         update = { button ->
+            val uiColor = UIColor(
+                red = textColor.red.toDouble(),
+                green = textColor.green.toDouble(),
+                blue = textColor.blue.toDouble(),
+                alpha = textColor.alpha.toDouble()
+            )
             button.setTitle(text, UIControlStateNormal)
-
-            @Suppress("MISSING_DEPENDENCY_CLASS")
-            button.layer.borderColor = textColor.toUIColor().CGColor
-            button.setTitleColor(textColor.toUIColor(), UIControlStateNormal)
+            button.layer.borderColor = uiColor.CGColor
+            button.setTitleColor(uiColor, UIControlStateNormal)
         },
         modifier = modifier
     )
+}
+
+@OptIn(ExperimentalForeignApi::class)
+@Composable
+actual fun AppSwitchRow(
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = title,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = Color(0xFF34C759),
+                uncheckedThumbColor = Color.White,
+                uncheckedTrackColor = Color(0xFFE9E9EB),
+                uncheckedBorderColor = Color.Transparent
+            )
+        )
+    }
 }

@@ -1,5 +1,5 @@
 package dole.ui.screens
-/*
+
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -53,9 +54,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import dole.data.models.StoredAccount
+import dole.ui.components.NameInputSection
+import dole.ui.components.PinOverlay
+import dole.ui.components.ResizableNumPad
 import dole.ui.components.WalletCard
+import dole.ui.components.triggerShakeAnimation
+import dole.ui.layouts.SplitLayout
+import dole.ui.metrics.rememberCardMetrics
+import dole.ui.metrics.rememberNumPadMetrics
+import dole.ui.modifiers.pinInputHandler
+import dole.utils.rememberSecureStorage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
@@ -70,7 +82,7 @@ fun SetupScreen(
     onErrorShown: () -> Unit = {},
     onRegister: (String, String) -> Unit,
     onCancel: () -> Unit,
-    onComplete: () -> Unit,
+    onComplete: (Boolean) -> Unit,
     sharedTransitionScope: SharedTransitionScope,
     animatedVisibilityScope: AnimatedVisibilityScope
 ) {
@@ -83,7 +95,9 @@ fun SetupScreen(
     var pinInput by remember { mutableStateOf("") }
     var firstPin by remember { mutableStateOf<String?>(null) }
     var step by remember { mutableIntStateOf(1) }
+    var wantsBiometrics by remember { mutableStateOf(true) }
 
+    val secureStorage = rememberSecureStorage()
     val scope = rememberCoroutineScope()
     var isLocalError by remember { mutableStateOf(false) }
     val shakeOffset = remember { Animatable(0f) }
@@ -95,7 +109,7 @@ fun SetupScreen(
         if (isError) {
             isRecoveringFromError = true
             shakeOffset.triggerShakeAnimation()
-            delay(300)
+            delay(300.milliseconds)
 
             pinInput = ""
             if (!cardHasPin && step == 3) {
@@ -143,7 +157,7 @@ fun SetupScreen(
                             scope.launch {
                                 isLocalError = true
                                 shakeOffset.triggerShakeAnimation()
-                                delay(600)
+                                delay(600.milliseconds)
                                 firstPin = null
                                 pinInput = ""
                                 step = 2
@@ -166,7 +180,7 @@ fun SetupScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.White)
+                .background(MaterialTheme.colorScheme.background)
                 .sharedBounds(
                     rememberSharedContentState(key = containerKey),
                     animatedVisibilityScope = animatedVisibilityScope,
@@ -181,7 +195,7 @@ fun SetupScreen(
                             }
                             Key.Enter -> {
                                 if (isSuccess) {
-                                    onComplete()
+                                    onComplete(wantsBiometrics)
                                     true
                                 } else if (step == 1 && name.isNotBlank()) {
                                     handleNameSubmit()
@@ -197,7 +211,7 @@ fun SetupScreen(
                     enabled = step >= 2 && !isLoading && !isRecoveringFromError,
                     onDigit = { handlePinInput(it) },
                     onDelete = { removeDigit() },
-                    onEscape = { }
+                    onEscape = { goBack() }
                 )
         ) {
             AnimatedContent(
@@ -207,11 +221,10 @@ fun SetupScreen(
                     fadeIn(animationSpec = tween(400)) togetherWith fadeOut(animationSpec = tween(400))
                 }
             ) { currentStep ->
-                AuthSplitLayout(
+                SplitLayout(
                     cardContent = {
                         BoxWithConstraints(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             val metrics = rememberCardMetrics(maxWidth, maxHeight)
-
                             val heightBasedWidth = (maxHeight - 40.dp).coerceAtLeast(0.dp) * 1.586f
                             val targetWidth = min(maxWidth * 1.1f, heightBasedWidth)
 
@@ -234,37 +247,27 @@ fun SetupScreen(
                                     overlayContent = if (showOverlay) {
                                         {
                                             if (currentStep == 4) {
-                                                Box(
-                                                    contentAlignment = Alignment.Center,
-                                                    modifier = Modifier.fillMaxSize()
-                                                ) {
+                                                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                                                     Icon(
                                                         imageVector = Icons.Default.CheckCircle,
                                                         contentDescription = "Success",
-                                                        tint = Color(
-                                                            0xFF4CAF50
-                                                        ),
-                                                        modifier = Modifier.size(
-                                                            metrics.actualHeight * 0.5f
-                                                        )
+                                                        tint = Color(0xFF4CAF50),
+                                                        modifier = Modifier.size(metrics.actualHeight * 0.5f)
                                                     )
                                                 }
                                             } else {
-                                                val title =
-                                                    when {
-                                                        isError -> "WRONG PIN"
-                                                        isLocalError -> "NO MATCH"
-                                                        currentStep == 2 -> if (cardHasPin) "ENTER PIN" else "CREATE PIN"
-                                                        else -> "CONFIRM PIN"
-                                                    }
-                                                val showErrorState =
-                                                    isLocalError || isError
+                                                val overlayTitle = when {
+                                                    isError -> "WRONG PIN"
+                                                    isLocalError -> "NO MATCH"
+                                                    currentStep == 2 -> if (cardHasPin) "ENTER PIN" else "CREATE PIN"
+                                                    else -> "CONFIRM PIN"
+                                                }
                                                 PinOverlay(
-                                                    title,
-                                                    pinInput.length,
-                                                    showErrorState,
-                                                    shakeOffset.value,
-                                                    metrics
+                                                    title = overlayTitle,
+                                                    pinLength = pinInput.length,
+                                                    isError = isLocalError || isError,
+                                                    shakeOffset = shakeOffset.value,
+                                                    metrics = metrics
                                                 )
                                             }
                                         }
@@ -274,32 +277,47 @@ fun SetupScreen(
                         }
                     },
                     inputContent = {
-                        BoxWithConstraints(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier.fillMaxSize()
-                        ) {
+                        BoxWithConstraints(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                             val metrics = rememberNumPadMetrics(maxWidth, maxHeight)
 
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(metrics.buttonSize * 0.25f),
+                                verticalArrangement = Arrangement.Center,
                                 modifier = Modifier.widthIn(max = 400.dp)
                             ) {
                                 when (currentStep) {
                                     1 -> NameInputSection(name, { name = it }, handleNameSubmit, metrics.buttonSize)
                                     4 -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(80.dp), tint = Color(0xFF4CAF50))
                                         Spacer(Modifier.height(16.dp))
-                                        Text("Setup successful!", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                                        Text("Setup successful!", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
                                         Spacer(Modifier.height(32.dp))
+
+                                        var wantsBiometrics by remember { mutableStateOf(secureStorage.isBiometricSupported) }
+
+                                        if (secureStorage.isBiometricSupported) {
+                                            dole.ui.components.AppSwitchButton(
+                                                title = "Use Biometrics",
+                                                checked = wantsBiometrics,
+                                                onCheckedChange = { wantsBiometrics = it }
+                                            )
+                                            Spacer(Modifier.height(32.dp))
+                                        }
+
                                         Button(
-                                            onClick = onComplete,
-                                            colors = ButtonDefaults.buttonColors(containerColor = Color.Black),
+                                            onClick = { onComplete(wantsBiometrics) },
+                                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                                             modifier = Modifier.height(50.dp).width(200.dp)
                                         ) {
                                             Text("Open Dashboard", fontWeight = FontWeight.Bold)
                                         }
                                     }
-                                    else -> ResizableNumPad(metrics.buttonSize, metrics.textSize, {handlePinInput(it) }, { removeDigit() })
+                                    else -> ResizableNumPad(
+                                        buttonSize = metrics.buttonSize,
+                                        textSize = metrics.textSize,
+                                        onDigit = { handlePinInput(it) },
+                                        onDelete = { removeDigit() }
+                                    )
                                 }
                             }
                         }
@@ -307,14 +325,8 @@ fun SetupScreen(
                     bottomContent = {
                         val buttonText = if (isLoading) "Cancel" else if (isSuccess) "Close" else "Cancel"
                         val buttonAction = if (isLoading) onCancel else { { goBack() } }
-
                         TextButton(onClick = buttonAction, modifier = Modifier.height(48.dp)) {
-                            Text(
-                                text = buttonText,
-                                color = if (isLoading) Color.White.copy(alpha = 0.8f) else Color.Red,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 18.sp
-                            )
+                            Text(buttonText, color = if (isLoading) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
                         }
                     }
                 )
@@ -322,25 +334,18 @@ fun SetupScreen(
 
             if (isLoading) {
                 Box(
-                    modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.8f)).zIndex(100f).clickable(enabled = false) {},
+                    modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.8f)).zIndex(100f).clickable(enabled = false) {},
                     contentAlignment = Alignment.Center
                 ) {
                     Box(modifier = Modifier.fillMaxSize()) {
-                        Column(
-                            modifier = Modifier.align(Alignment.Center),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            CircularProgressIndicator(color = Color.White, modifier = Modifier.size(60.dp), strokeWidth = 4.dp)
+                        Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(60.dp), strokeWidth = 4.dp)
                             Spacer(Modifier.height(32.dp))
-                            Text("Please hold card to your device", style = MaterialTheme.typography.headlineSmall, color = Color.White, fontWeight = FontWeight.Bold)
+                            Text("Please hold card to your device", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
                         }
-
-                        Box(
-                            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(60.dp),
-                            contentAlignment = Alignment.TopCenter
-                        ) {
+                        Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(100.dp).padding(bottom = 32.dp), contentAlignment = Alignment.Center) {
                             TextButton(onClick = onCancel, modifier = Modifier.height(48.dp)) {
-                                Text("Cancel", color = Color.Red, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                                Text("Cancel", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
                             }
                         }
                     }
@@ -349,4 +354,3 @@ fun SetupScreen(
         }
     }
 }
- */

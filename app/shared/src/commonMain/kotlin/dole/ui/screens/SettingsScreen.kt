@@ -1,5 +1,5 @@
 package dole.ui.screens
-/*
+
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -50,15 +51,27 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import dole.data.models.StoredAccount
+import dole.ui.components.NameInputSection
+import dole.ui.components.PinOverlay
+import dole.ui.components.ResizableNumPad
 import dole.ui.components.WalletCard
+import dole.ui.components.triggerShakeAnimation
+import dole.ui.layouts.SplitLayout
+import dole.ui.metrics.rememberCardMetrics
+import dole.ui.metrics.rememberNumPadMetrics
+import dole.ui.modifiers.pinInputHandler
+import dole.utils.rememberAppClipboard
+import dole.utils.rememberSecureStorage
+import dole.viewmodel.WalletViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.milliseconds
 
 private enum class SettingsStep { MENU, NAME, PIN_ENTER, PIN_CONFIRM, SUCCESS }
 
@@ -76,8 +89,9 @@ fun SettingsScreen(
     var pinInput by remember { mutableStateOf("") }
     var firstPin by remember { mutableStateOf<String?>(null) }
 
-    @Suppress("DEPRECATION")
-    val clipboardManager = LocalClipboardManager.current
+    val clipboard = rememberAppClipboard()
+    val secureStorage = rememberSecureStorage()
+
     var isError by remember { mutableStateOf(false) }
     val shakeOffset = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
@@ -86,7 +100,11 @@ fun SettingsScreen(
     val isLoading = viewModel.isSettingsLoading
 
     val previewAccount = remember(nameInput, viewModel.currentId) {
-        StoredAccount(viewModel.currentId ?: "", nameInput, "")
+        StoredAccount(
+            viewModel.currentId ?: "",
+            nameInput,
+            ""
+        )
     }
 
     fun resetToMenu() {
@@ -101,7 +119,7 @@ fun SettingsScreen(
         scope.launch {
             isError = true
             shakeOffset.triggerShakeAnimation()
-            delay(600)
+            delay(600.milliseconds)
             pinInput = ""
             firstPin = null
             step = SettingsStep.PIN_ENTER
@@ -162,7 +180,7 @@ fun SettingsScreen(
                 onEscape = { }
             )
     ) {
-        AuthSplitLayout(
+        SplitLayout(
             cardContent = {
                 with(sharedTransitionScope) {
                     BoxWithConstraints(
@@ -192,7 +210,11 @@ fun SettingsScreen(
                                 SettingsStep.SUCCESS -> "UPDATED"
                             }
 
-                            val accountToShow = if(step == SettingsStep.NAME) previewAccount else StoredAccount(viewModel.currentId?:"", viewModel.currentName, "")
+                            val accountToShow = if(step == SettingsStep.NAME) previewAccount else StoredAccount(
+                                viewModel.currentId ?: "",
+                                viewModel.currentName,
+                                ""
+                            )
 
                             val showOverlay = step == SettingsStep.PIN_ENTER || step == SettingsStep.PIN_CONFIRM || step == SettingsStep.SUCCESS
 
@@ -204,15 +226,8 @@ fun SettingsScreen(
                                     showFullId = true,
                                     onIdClick = {
                                         viewModel.currentId?.let { id ->
-                                            copyToClipboard(
-                                                clipboardManager = clipboardManager,
-                                                text = id,
-                                                onSuccess = {
-                                                    viewModel.showUserMessage(
-                                                        "ID copied to clipboard"
-                                                    )
-                                                }
-                                            )
+                                            clipboard.copy(id)
+                                            viewModel.showUserMessage("ID copied to clipboard")
                                         }
                                     },
                                     overlayContent = if (showOverlay) {
@@ -225,12 +240,8 @@ fun SettingsScreen(
                                                     Icon(
                                                         imageVector = Icons.Default.CheckCircle,
                                                         contentDescription = "Success",
-                                                        tint = Color(
-                                                            0xFF4CAF50
-                                                        ),
-                                                        modifier = Modifier.size(
-                                                            metrics.actualHeight * 0.5f
-                                                        )
+                                                        tint = Color(0xFF4CAF50),
+                                                        modifier = Modifier.size(metrics.actualHeight * 0.5f)
                                                     )
                                                 }
                                             } else {
@@ -268,12 +279,26 @@ fun SettingsScreen(
                         ) {
                             when (currentStep) {
                                 SettingsStep.MENU -> {
-                                    SettingsMenuButton("Change Name") { step = SettingsStep.NAME }
-                                    SettingsMenuButton("Change PIN") { step = SettingsStep.PIN_ENTER }
+                                    SettingsMenuButton("Change Name", MaterialTheme.colorScheme.onBackground) { step = SettingsStep.NAME }
+                                    SettingsMenuButton("Change PIN", MaterialTheme.colorScheme.onBackground) { step = SettingsStep.PIN_ENTER }
 
                                     Spacer(Modifier.height(16.dp))
 
-                                    SettingsMenuButton("Delete account on device", color = Color.Red) {
+                                    if (secureStorage.isBiometricSupported) {
+                                        var isBioEnabled by remember { mutableStateOf(viewModel.isBiometricsEnabled(viewModel.currentId ?: "")) }
+
+                                        dole.ui.components.AppSwitchButton(
+                                            title = "Use Biometrics",
+                                            checked = isBioEnabled,
+                                            onCheckedChange = { isChecked ->
+                                                isBioEnabled = isChecked
+                                                viewModel.setBiometricsEnabled(viewModel.currentId ?: "", isChecked)
+                                            }
+                                        )
+                                        Spacer(Modifier.height(16.dp))
+                                    }
+
+                                    SettingsMenuButton("Delete account on device", color = MaterialTheme.colorScheme.error) {
                                         viewModel.deleteCurrentAccount()
                                     }
                                 }
@@ -293,10 +318,10 @@ fun SettingsScreen(
                                     Spacer(Modifier.height(16.dp))
                                     Button(
                                         onClick = onBack,
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color.Black),
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                                         modifier = Modifier.height(50.dp).width(200.dp)
                                     ) {
-                                        Text("Back to Dashboard")
+                                        Text("Back to Dashboard", fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -312,7 +337,7 @@ fun SettingsScreen(
                     TextButton(onClick = buttonAction, modifier = Modifier.height(48.dp)) {
                         Text(
                             buttonText,
-                            color = Color.Red,
+                            color = MaterialTheme.colorScheme.error,
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 18.sp
                         )
@@ -325,7 +350,7 @@ fun SettingsScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.8f))
+                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.8f))
                     .zIndex(100f)
                     .clickable(enabled = false) {},
                 contentAlignment = Alignment.Center
@@ -335,23 +360,20 @@ fun SettingsScreen(
                         modifier = Modifier.align(Alignment.Center),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(60.dp), strokeWidth = 4.dp)
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(60.dp), strokeWidth = 4.dp)
                         Spacer(Modifier.height(32.dp))
-                        Text("Hold card to device...", style = MaterialTheme.typography.headlineSmall, color = Color.White, fontWeight = FontWeight.Bold)
+                        Text("Hold card to device...", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
                     }
 
                     Box(
-                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(60.dp),
-                        contentAlignment = Alignment.TopCenter
+                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(100.dp).padding(bottom = 32.dp),
+                        contentAlignment = Alignment.Center
                     ) {
                         TextButton(
-                            onClick = {
-                                viewModel.cancelSettingsOperation()
-                                resetToMenu()
-                            },
+                            onClick = { resetToMenu() },
                             modifier = Modifier.height(48.dp)
                         ) {
-                            Text("Cancel", color = Color.Red, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                            Text("Cancel", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
                         }
                     }
                 }
@@ -363,7 +385,7 @@ fun SettingsScreen(
 @Composable
 fun SettingsMenuButton(
     text: String,
-    color: Color = Color.Black,
+    color: Color = MaterialTheme.colorScheme.onBackground,
     onClick: () -> Unit
 ) {
     OutlinedButton(
@@ -376,4 +398,3 @@ fun SettingsMenuButton(
         Text(text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
     }
 }
- */

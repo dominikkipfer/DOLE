@@ -1,4 +1,4 @@
-package dole.ui.screens
+package dole.viewmodel
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -32,8 +32,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
+import dole.data.models.StoredAccount
 import dole.ui.components.LocalCardPulse
 import dole.ui.components.NewCardOverlay
+import dole.ui.screens.AuthScreen
+import dole.ui.screens.DashboardScreen
+import dole.ui.screens.HomeScreen
+import dole.ui.screens.SettingsScreen
+import dole.ui.screens.SetupScreen
 import dole.ui.theme.DoleTheme
 import kotlinx.coroutines.launch
 
@@ -44,11 +50,22 @@ fun WalletApp(viewModel: WalletViewModel) {
         val errorMessage = viewModel.errorMessage
         val userMessage = viewModel.userMessage
 
+        val isPinError = errorMessage?.contains("PIN", ignoreCase = true) == true ||
+                errorMessage?.contains("Verification failed", ignoreCase = true) == true ||
+                errorMessage?.contains("remaining", ignoreCase = true) == true
+
+        val shouldShowSnackbar = errorMessage != null && (
+                errorMessage.contains("remaining", ignoreCase = true) ||
+                        errorMessage.contains("bricked", ignoreCase = true) ||
+                        (!errorMessage.contains("Invalid PIN", ignoreCase = true) &&
+                                !errorMessage.equals("PIN verification failed", ignoreCase = true))
+                )
+
         val snackbarHostState = remember { SnackbarHostState() }
         val scope = rememberCoroutineScope()
 
         LaunchedEffect(errorMessage) {
-            if (errorMessage != null) {
+            if (errorMessage != null && shouldShowSnackbar) {
                 scope.launch {
                     snackbarHostState.currentSnackbarData?.dismiss()
                     snackbarHostState.showSnackbar(message = errorMessage)
@@ -65,6 +82,9 @@ fun WalletApp(viewModel: WalletViewModel) {
                 }
             }
         }
+
+        var cachedLoginAccount by remember { mutableStateOf<StoredAccount?>(null) }
+        if (viewModel.detectedAccount != null) cachedLoginAccount = viewModel.detectedAccount
 
         val infiniteTransition = rememberInfiniteTransition(label = "global_pulse")
         val globalPulse by infiniteTransition.animateFloat(
@@ -83,7 +103,8 @@ fun WalletApp(viewModel: WalletViewModel) {
             if (!viewModel.isNewCardDetected) manuallyDismissed = false
         }
 
-        val showNewCardOverlay = viewModel.isNewCardDetected && !manuallyDismissed
+        val showNewCardOverlay = viewModel.isNewCardDetected && !manuallyDismissed &&
+                viewModel.currentScreen != AppScreenState.SETUP && viewModel.currentScreen != AppScreenState.LOGIN
 
         SharedTransitionLayout {
             CompositionLocalProvider(LocalCardPulse provides globalPulse) {
@@ -100,12 +121,69 @@ fun WalletApp(viewModel: WalletViewModel) {
                             ) { targetScreen ->
                                 val animatedVisibilityScope = this
                                 when (targetScreen) {
+                                    AppScreenState.HOME -> HomeScreen(
+                                        accounts = viewModel.availableAccounts,
+                                        onAccountClick = {
+                                            viewModel.selectAccountToLogin(
+                                                it
+                                            )
+                                        },
+                                        physicallyConnectedAccount = viewModel.physicallyConnectedCardAccount,
+                                        isOverlayVisible = showNewCardOverlay,
+                                        initialSelectedAccountId = cachedLoginAccount?.id,
+                                        sharedTransitionScope = this@SharedTransitionLayout,
+                                        animatedVisibilityScope = animatedVisibilityScope
+                                    )
+                                    AppScreenState.LOGIN -> {
+                                        val accountToShow = cachedLoginAccount
+                                        if (accountToShow != null) {
+                                            AuthScreen(
+                                                account = accountToShow,
+                                                physicallyConnectedAccount = viewModel.physicallyConnectedCardAccount,
+                                                isBiometricsEnabled = viewModel.isBiometricsEnabled(accountToShow.id),
+                                                isError = isPinError,
+                                                onErrorShown = { viewModel.dismissError() },
+                                                onLogin = { viewModel.attemptLogin(it) },
+                                                onCancel = { viewModel.cancelAuth() },
+                                                sharedTransitionScope = this@SharedTransitionLayout,
+                                                animatedVisibilityScope = animatedVisibilityScope
+                                            )
+                                        } else {
+                                            Box(Modifier.fillMaxSize())
+                                        }
+                                    }
+                                    AppScreenState.SETUP -> {
+                                        val targetCardId = viewModel.setupTargetCardId ?: "NULL"
+                                        val isTargetCardConnected = viewModel.currentDetectedCardId != null &&
+                                                viewModel.currentDetectedCardId == targetCardId
+
+                                        SetupScreen(
+                                            cardId = targetCardId,
+                                            cardHasPin = viewModel.newCardHasPin,
+                                            initialName = "",
+                                            isSuccess = viewModel.isSetupSuccessful,
+                                            isLoading = viewModel.isSetupLoading,
+                                            isCardConnected = isTargetCardConnected,
+                                            isError = isPinError,
+                                            onErrorShown = { viewModel.dismissError() },
+                                            onRegister = { pin, name -> viewModel.handleSetupOrImportSubmit(pin, name) },
+                                            onCancel = { viewModel.logout() },
+                                            onComplete = { wantsBiometrics -> viewModel.completeSetup(wantsBiometrics) },
+                                            sharedTransitionScope = this@SharedTransitionLayout,
+                                            animatedVisibilityScope = animatedVisibilityScope
+                                        )
+                                    }
                                     AppScreenState.DASHBOARD -> DashboardScreen(
                                         viewModel = viewModel,
                                         sharedTransitionScope = this@SharedTransitionLayout,
                                         animatedVisibilityScope = animatedVisibilityScope
                                     )
-                                    else -> Box(Modifier.fillMaxSize())
+                                    AppScreenState.SETTINGS -> SettingsScreen(
+                                        viewModel = viewModel,
+                                        onBack = { viewModel.currentScreen = AppScreenState.DASHBOARD },
+                                        sharedTransitionScope = this@SharedTransitionLayout,
+                                        animatedVisibilityScope = animatedVisibilityScope
+                                    )
                                 }
                             }
 

@@ -1,10 +1,11 @@
 package dole.ui.screens
-/*
+
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -12,6 +13,10 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -27,16 +32,20 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -47,17 +56,21 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
 import androidx.compose.ui.unit.times
 import androidx.compose.ui.zIndex
+import dole.data.models.StoredAccount
 import dole.ui.components.EdgeLabelPlacement
 import dole.ui.components.WalletCard
+import dole.ui.modifiers.sharedCardEffect
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.time.Duration.Companion.milliseconds
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
@@ -70,7 +83,9 @@ fun HomeScreen(
     sharedTransitionScope: SharedTransitionScope,
     animatedVisibilityScope: AnimatedVisibilityScope
 ) {
-    val backgroundColor = Color(0xFFF2F2F7)
+    val backgroundColor = MaterialTheme.colorScheme.background
+    val onBackgroundColor = MaterialTheme.colorScheme.onBackground
+    val emptyTextColor = MaterialTheme.colorScheme.onSurfaceVariant
 
     Box(modifier = Modifier.fillMaxSize().background(backgroundColor)) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -91,8 +106,7 @@ fun HomeScreen(
             val horizontalRange = (availableWidth - cardMaxWidth - 40.dp).coerceAtLeast(0.dp)
 
             val minSpacing = cardActualHeight * 0.2f
-
-            val maxSpacing = (if (isWideLayout) cardMaxWidth else cardActualHeight)
+            val maxSpacing = if (isWideLayout) cardMaxWidth else cardActualHeight
             val itemCount = accounts.size
             val maxScrollIndex = (itemCount - 1).coerceAtLeast(0).toFloat()
             val totalSlack = if (isWideLayout) horizontalRange else verticalRange
@@ -112,30 +126,12 @@ fun HomeScreen(
             var isUserScrolling by remember { mutableStateOf(false) }
             var scrollIdleJob by remember { mutableStateOf<Job?>(null) }
 
+            LaunchedEffect(Unit) { focusRequester.requestFocus() }
+
             LaunchedEffect(isSparseLayout) {
                 if (isSparseLayout) {
                     wheelSnapJob?.cancel()
                     animatedScrollOffset.snapTo(0f)
-                }
-            }
-
-            LaunchedEffect(Unit) { focusRequester.requestFocus() }
-
-            fun snapToRelative(delta: Int) {
-                if (isSparseLayout) return
-                val current = animatedScrollOffset.targetValue
-                val target = (current + delta).roundToInt().toFloat().coerceIn(0f, maxScrollIndex)
-                coroutineScope.launch {
-                    isUserScrolling = true
-                    scrollIdleJob?.cancel()
-                    animatedScrollOffset.animateTo(
-                        targetValue = target,
-                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
-                    )
-                    scrollIdleJob = coroutineScope.launch {
-                        delay(150)
-                        isUserScrolling = false
-                    }
                 }
             }
 
@@ -150,8 +146,22 @@ fun HomeScreen(
                 }
             }
 
-            LaunchedEffect(isSparseLayout) {
-                if (isSparseLayout) animatedScrollOffset.snapTo(0f)
+            fun snapToRelative(delta: Int) {
+                if (isSparseLayout) return
+                val current = animatedScrollOffset.targetValue
+                val target = (current + delta).roundToInt().toFloat().coerceIn(0f, maxScrollIndex)
+                coroutineScope.launch {
+                    isUserScrolling = true
+                    scrollIdleJob?.cancel()
+                    animatedScrollOffset.animateTo(
+                        targetValue = target,
+                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+                    )
+                    scrollIdleJob = coroutineScope.launch {
+                        delay(150.milliseconds)
+                        isUserScrolling = false
+                    }
+                }
             }
 
             Box(
@@ -180,7 +190,7 @@ fun HomeScreen(
                             isUserScrolling = true
                             scrollIdleJob?.cancel()
                             scrollIdleJob = coroutineScope.launch {
-                                delay(150)
+                                delay(150.milliseconds)
                                 isUserScrolling = false
                             }
                             val sensitivity = if(isWideLayout) 0.006f else 0.003f
@@ -203,7 +213,7 @@ fun HomeScreen(
                                     )
                                 )
                                 scrollIdleJob = coroutineScope.launch {
-                                    delay(150)
+                                    delay(150.milliseconds)
                                     isUserScrolling = false
                                 }
                             }
@@ -220,7 +230,7 @@ fun HomeScreen(
                                     isUserScrolling = true
                                     scrollIdleJob?.cancel()
                                     scrollIdleJob = coroutineScope.launch {
-                                        delay(150)
+                                        delay(150.milliseconds)
                                         isUserScrolling = false
                                     }
 
@@ -246,7 +256,7 @@ fun HomeScreen(
 
                                     wheelSnapJob?.cancel()
                                     wheelSnapJob = coroutineScope.launch {
-                                        delay(100)
+                                        delay(100.milliseconds)
                                         val snapped = animatedScrollOffset.value.roundToInt().toFloat().coerceIn(0f, maxScrollIndex)
                                         animatedScrollOffset.animateTo(
                                             targetValue = snapped,
@@ -254,7 +264,7 @@ fun HomeScreen(
                                         )
                                         scrollIdleJob?.cancel()
                                         scrollIdleJob = coroutineScope.launch {
-                                            delay(150)
+                                            delay(150.milliseconds)
                                             isUserScrolling = false
                                         }
                                     }
@@ -272,92 +282,96 @@ fun HomeScreen(
                 val globalXOffset = if (isWideLayout && !isSparseLayout) (scrollProgress - 0.5f) * horizontalRange else 0.dp
 
                 accounts.forEachIndexed { index, acc ->
-                    val isInserted = physicallyConnectedAccount?.id == acc.id
-                    val delta = index - visualScrollValue
+                    key(acc.id) {
+                        val isInserted = physicallyConnectedAccount?.id == acc.id
+                        val delta = index - visualScrollValue
 
-                    val cardExtent = if (isWideLayout) cardMaxWidth else cardActualHeight
-                    val coverageRatio = (1f - (spacing / cardExtent)).coerceIn(0f, 1f)
+                        val cardExtent = if (isWideLayout) cardMaxWidth else cardActualHeight
+                        val coverageRatio = (1f - (spacing / cardExtent)).coerceIn(0f, 1f)
 
-                    val showEdgeLabels = if (abs(delta) <= 0.6f) {
-                        false
-                    } else {
-                        val baseThreshold = if (isWideLayout) if (delta < 0f) 0.5f else 0.2f else 0.25f
-                        val distanceFactor = (abs(delta) - 1f).coerceAtLeast(0f) * 0.014f
-                        val individualThreshold = (baseThreshold + distanceFactor)
-
-                        coverageRatio > individualThreshold
-                    }
-
-                    val edgePlacement = if (isWideLayout) {
-                        if (delta < 0f) EdgeLabelPlacement.Left else EdgeLabelPlacement.Right
-                    } else {
-                        if (delta < 0f) EdgeLabelPlacement.Top else EdgeLabelPlacement.Bottom
-                    }
-
-                    if (delta > -20f && delta < 20f) {
-                        val zIndex = 100f - abs(delta)
-                        val scale = if (isSparseLayout) 1f else (1f - (abs(delta) * 0.05f)).coerceAtLeast(0.85f)
-                        val alpha = 1f
-
-                        val modifier = if (isWideLayout) {
-                            val localXShift = delta * spacing
-                            val finalX = localXShift + globalXOffset
-
-                            Modifier
-                                .zIndex(zIndex)
-                                .graphicsLayer {
-                                    this.scaleX = scale
-                                    this.scaleY = scale
-                                    this.alpha = alpha
-                                    this.cameraDistance = 30f * density.density
-                                }
-                                .offset { androidx.compose.ui.unit.IntOffset(x = finalX.roundToPx(), y = 0) }
+                        val showEdgeLabels = if (abs(delta) <= 0.6f) {
+                            false
                         } else {
-                            val localYShift = delta * spacing
-                            val portraitTopOffset = 30.dp
-                            val finalY = localYShift + globalYOffset + portraitTopOffset
-
-                            Modifier
-                                .zIndex(zIndex)
-                                .graphicsLayer {
-                                    this.scaleX = scale
-                                    this.scaleY = scale
-                                    this.alpha = alpha
-                                    this.cameraDistance = 20f * density.density
-                                }
-                                .offset { androidx.compose.ui.unit.IntOffset(x = 0, y = finalY.roundToPx()) }
+                            val baseThreshold = if (isWideLayout) if (delta < 0f) 0.5f else 0.2f else 0.25f
+                            val distanceFactor = (abs(delta) - 1f).coerceAtLeast(0f) * 0.014f
+                            val individualThreshold = (baseThreshold + distanceFactor)
+                            coverageRatio > individualThreshold
                         }
 
-                        val applySharedBounds = @Composable { modifier: Modifier, id: String ->
-                            with(sharedTransitionScope) {
-                                modifier.sharedBounds(
-                                    sharedContentState = rememberSharedContentState(key = "card-$id"),
-                                    animatedVisibilityScope = animatedVisibilityScope,
-                                    boundsTransform = { _, _ -> tween(500) },
-                                    renderInOverlayDuringTransition = false
+                        val edgePlacement = if (isWideLayout) {
+                            if (delta < 0f) EdgeLabelPlacement.Left else EdgeLabelPlacement.Right
+                        } else {
+                            if (delta < 0f) EdgeLabelPlacement.Top else EdgeLabelPlacement.Bottom
+                        }
+
+                        if (delta > -20f && delta < 20f) {
+                            val interactionSource = remember { MutableInteractionSource() }
+                            val isHovered by interactionSource.collectIsHoveredAsState()
+                            val isDarkTheme = isSystemInDarkTheme()
+
+                            val hoverDim by animateFloatAsState(
+                                targetValue = if (isHovered) (if (isDarkTheme) 0.4f else 0.15f) else 0f,
+                                animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                                label = "Hover Dim"
+                            )
+
+                            val zIndex = if (isHovered) 200f else 100f - abs(delta)
+                            val scale = if (isSparseLayout) 1f else (1f - (abs(delta) * 0.05f)).coerceAtLeast(0.85f)
+                            val alpha = 1f
+
+                            val positioningModifier = if (isWideLayout) {
+                                val localXShift = delta * spacing
+                                val finalX = localXShift + globalXOffset
+                                Modifier
+                                    .zIndex(zIndex)
+                                    .graphicsLayer {
+                                        this.scaleX = scale
+                                        this.scaleY = scale
+                                        this.alpha = alpha
+                                        this.cameraDistance = 30f * density.density
+                                    }
+                                    .offset { IntOffset(x = finalX.roundToPx(), y = 0) }
+                            } else {
+                                val localYShift = delta * spacing
+                                val portraitTopOffset = 30.dp
+                                val finalY = localYShift + globalYOffset + portraitTopOffset
+                                Modifier
+                                    .zIndex(zIndex)
+                                    .graphicsLayer {
+                                        this.scaleX = scale
+                                        this.scaleY = scale
+                                        this.alpha = alpha
+                                        this.cameraDistance = 20f * density.density
+                                    }
+                                    .offset { IntOffset(x = 0, y = finalY.roundToPx()) }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .widthIn(max = cardMaxWidth)
+                                    .fillMaxWidth()
+                                    .then(positioningModifier)
+                            ) {
+                                WalletCard(
+                                    account = acc,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .sharedCardEffect(
+                                            sharedTransitionScope = sharedTransitionScope,
+                                            animatedVisibilityScope = animatedVisibilityScope,
+                                            key = "card-${acc.id}",
+                                            interactionSource = interactionSource,
+                                            hoverDim = hoverDim
+                                        ),
+                                    isOnline = isInserted,
+                                    showFullId = false,
+                                    showInlineLabels = !showEdgeLabels,
+                                    showEdgeLabels = showEdgeLabels,
+                                    edgeLabelPlacement = edgePlacement,
+                                    rotateEdgeLabels = isWideLayout,
+                                    onClick = { onAccountClick(acc) }
                                 )
                             }
-                        }
-
-                        Box(modifier = Modifier.widthIn(max = cardMaxWidth).fillMaxWidth().then(modifier)) {
-                            WalletCard(
-                                account = acc,
-                                modifier = applySharedBounds(
-                                    Modifier.fillMaxWidth(),
-                                    acc.id
-                                ),
-                                isOnline = isInserted,
-                                showFullId = false,
-                                showInlineLabels = !showEdgeLabels,
-                                showEdgeLabels = showEdgeLabels,
-                                edgeLabelPlacement = edgePlacement,
-                                rotateEdgeLabels = isWideLayout,
-                                onClick = {
-                                    onAccountClick(
-                                        acc
-                                    )
-                                }
-                            )
                         }
                     }
                 }
@@ -365,7 +379,7 @@ fun HomeScreen(
 
             if (accounts.isEmpty() && !isOverlayVisible) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Hold your card to your device.", color = Color.Gray)
+                    Text("Hold your card to your device.", color = emptyTextColor)
                 }
             }
         }
@@ -379,7 +393,7 @@ fun HomeScreen(
                     Brush.verticalGradient(
                         0.0f to backgroundColor,
                         0.65f to backgroundColor,
-                        1.0f to backgroundColor.copy(alpha = 0f)
+                        1.0f to Color.Transparent
                     )
                 )
                 .padding(top = 24.dp)
@@ -390,13 +404,12 @@ fun HomeScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "Wallet",
+                    text = "Wallet",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
-                    color = Color.Black
+                    color = onBackgroundColor
                 )
             }
         }
     }
 }
-*/

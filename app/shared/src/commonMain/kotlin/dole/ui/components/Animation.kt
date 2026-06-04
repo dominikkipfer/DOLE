@@ -1,4 +1,4 @@
-package dole.ui.utils
+package dole.ui.components
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D

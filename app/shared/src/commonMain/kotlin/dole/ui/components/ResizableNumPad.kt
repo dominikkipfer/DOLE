@@ -1,4 +1,4 @@
-package dole.ui.screens
+package dole.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,9 +48,9 @@ fun ResizableNumPad(buttonSize: Dp, textSize: TextUnit, onDigit: (String) -> Uni
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
-                                    Icons.AutoMirrored.Filled.Backspace,
+                                    imageVector = Icons.AutoMirrored.Filled.Backspace,
                                     contentDescription = "Delete",
-                                    tint = Color.Black,
+                                    tint = MaterialTheme.colorScheme.onBackground,
                                     modifier = Modifier.size(buttonSize * 0.4f)
                                 )
                             }
@@ -59,11 +60,16 @@ fun ResizableNumPad(buttonSize: Dp, textSize: TextUnit, onDigit: (String) -> Uni
                             modifier = Modifier
                                 .size(buttonSize)
                                 .clip(CircleShape)
-                                .background(Color.White)
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
                                 .clickable { onDigit(key) },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(text = key, fontSize = textSize, fontWeight = FontWeight.SemiBold, color = Color.Black)
+                            Text(
+                                text = key,
+                                fontSize = textSize,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     } else {
                         Spacer(Modifier.size(buttonSize))
