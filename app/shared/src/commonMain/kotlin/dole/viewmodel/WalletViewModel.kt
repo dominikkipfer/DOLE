@@ -225,11 +225,6 @@ class WalletViewModel(
             }
         }
 
-        override fun onError(message: String) {
-            viewModelScope.launch {
-                errorMessage = message
-            }
-        }
     }
 
     init {
@@ -393,12 +388,12 @@ class WalletViewModel(
                 if (!card.isGenesisDone) {
                     try {
                         val response = card.processGenesis()
-                        val sigBytes = response.copyOfRange(Constants.LONG_SIZE.toInt(), response.size)
+                        val sigBytes = ProtocolSerializer.parseGenesisSignatureFromResponse(response)
 
                         val sigHex = CoreWrapper.bytesToHex(sigBytes)
                         val certHex = CoreWrapper.bytesToHex(cert)
 
-                        CoreWrapper.genesis(fullPubKeyHex, sigHex, certHex)
+                        CoreWrapper.genesis(sigHex, certHex)
                     } catch (e: Exception) {
                         println("Genesis failed: ${e.message}")
                     }

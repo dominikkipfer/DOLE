@@ -17,9 +17,6 @@ actual object CoreWrapper {
             override fun onStateUpdated(balance: Long, transactionHistoryJson: String) {
                 listener.onStateUpdated(balance, transactionHistoryJson)
             }
-            override fun onError(message: String) {
-                listener.onError(message)
-            }
         }
         ledger = Ledger.initLedger(rustListener, storagePath, publicKeyId, publicKeyFull)
     }
@@ -29,20 +26,20 @@ actual object CoreWrapper {
         ledger = null
     }
 
-    actual fun genesis(fullPubKeyHex: String, sigHex: String, certHex: String) {
-        ledger?.genesis(fullPubKeyHex, sigHex, certHex)
+    actual fun genesis(sigHex: String, certHex: String) {
+        ledger?.genesis(sigHex, certHex)
     }
 
-    actual fun mint(amount: Long, sigHex: String) {
-        ledger?.mint(amount, sigHex)
+    actual fun mint(amount: Long, seq: Long, sigHex: String) {
+        ledger?.mint(amount, seq, sigHex)
     }
 
-    actual fun burn(amount: Long, sigHex: String) {
-        ledger?.burn(amount, sigHex)
+    actual fun burn(amount: Long, seq: Long, sigHex: String) {
+        ledger?.burn(amount, seq, sigHex)
     }
 
-    actual fun send(targetPubKey: String, amount: Long, sigHex: String) {
-        ledger?.send(targetPubKey, amount, sigHex)
+    actual fun send(targetPubKey: String, amount: Long, seq: Long, sigHex: String) {
+        ledger?.send(targetPubKey, amount, seq, sigHex)
     }
 
     actual fun bytesToHex(bytes: ByteArray): String = dole.core.bytesToHex(bytes)
@@ -51,5 +48,13 @@ actual object CoreWrapper {
 
     actual fun verifyCardCertificate(pubKey: ByteArray, cert: ByteArray): Boolean {
         return dole.core.verifyCardCertificate(pubKey, cert)
+    }
+
+    actual fun startBleAdvertising(storagePath: String): Boolean {
+        return dole.core.startBleAdvertising(storagePath)
+    }
+
+    actual fun stopBleAdvertising() {
+        dole.core.stopBleAdvertising()
     }
 }

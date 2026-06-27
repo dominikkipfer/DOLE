@@ -1,12 +1,14 @@
 import java.net.URI
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import org.gradle.api.file.RelativePath
+import org.gradle.process.CommandLineArgumentProvider
 
 plugins {
     java
 }
 
-val gp: Configuration by configurations.creating
+val gp = configurations.create("gp")
 
 val toolSourceSet: SourceSet = sourceSets.create("tool") {
     java.srcDir("src/tool/java")
@@ -15,7 +17,7 @@ val toolSourceSet: SourceSet = sourceSets.create("tool") {
     runtimeClasspath += sourceSets.main.get().output
 }
 
-val sdkUrl = "https://github.com/martinpaljak/oracle_javacard_sdks/archive/3751d774dd.zip"
+val sdkUrl = "https://codeload.github.com/martinpaljak/oracle_javacard_sdks/zip/refs/heads/master"
 val antJavacardUrl = "https://github.com/martinpaljak/ant-javacard/releases/latest/download/ant-javacard.jar"
 val gpUrl = "https://github.com/martinpaljak/GlobalPlatformPro/releases/latest/download/gp.jar"
 
@@ -24,12 +26,17 @@ val sdkZip: Provider<RegularFile> = downloadDir.map { it.file("sdk.zip") }
 val antJar: Provider<RegularFile> = downloadDir.map { it.file("ant-javacard.jar") }
 val gpJar: Provider<RegularFile> = downloadDir.map { it.file("gp.jar") }
 
+val javaCardKitVersion = libs.versions.javaCardKit.get()
+val javaCardApiVersion = libs.versions.javaCardApi.get()
+val sdkArchiveDirName = "jc320v${javaCardKitVersion}_kit"
 val sdkRoot: Provider<Directory> = layout.buildDirectory.dir("javacard-sdk")
-val sdkLib: Provider<RegularFile> = sdkRoot.map { it.dir("jc320v25.1_kit").dir("lib").file("api_classic-3.0.5.jar") }
+val sdkKit: Provider<Directory> = sdkRoot.map { it.dir("kit") }
+val sdkLib: Provider<RegularFile> = sdkKit.map { it.dir("lib").file("api_classic-$javaCardApiVersion.jar") }
+val jdkVersion = libs.versions.java.get().toInt()
 
 java {
     toolchain {
-        languageVersion.set(JavaLanguageVersion.of(21))
+        languageVersion.set(JavaLanguageVersion.of(jdkVersion))
     }
 }
 
@@ -39,7 +46,7 @@ sourceSets {
     }
 }
 
-val downloadAntJar by tasks.registering {
+val downloadAntJar = tasks.register("downloadAntJar") {
     val dest = antJar
     val url = antJavacardUrl
     outputs.file(dest)
@@ -52,7 +59,7 @@ val downloadAntJar by tasks.registering {
     }
 }
 
-val downloadGpJar by tasks.registering {
+val downloadGpJar = tasks.register("downloadGpJar") {
     val dest = gpJar
     val url = gpUrl
     outputs.file(dest)
@@ -65,7 +72,7 @@ val downloadGpJar by tasks.registering {
     }
 }
 
-val downloadSdk by tasks.registering {
+val downloadSdk = tasks.register("downloadSdk") {
     val dest = sdkZip
     val url = sdkUrl
     outputs.file(dest)
@@ -78,21 +85,37 @@ val downloadSdk by tasks.registering {
     }
 }
 
-val extractSdk by tasks.registering(Copy::class) {
+val extractSdk = tasks.register<Copy>("extractSdk") {
     dependsOn(downloadSdk)
+
     from(zipTree(sdkZip.map { it.asFile })) {
+        include("**/$sdkArchiveDirName/**")
+
         eachFile {
             val seg = relativePath.segments
-            if (seg.size > 1) relativePath = RelativePath(true, *seg.drop(1).toTypedArray())
+            val kitIndex = seg.indexOf(sdkArchiveDirName)
+
+            if (kitIndex >= 0) {
+                val afterKit = seg.drop(kitIndex + 1)
+
+                if (afterKit.isNotEmpty()) {
+                    relativePath = RelativePath(!isDirectory, "kit", *afterKit.toTypedArray())
+                } else {
+                    exclude()
+                }
+            } else {
+                exclude()
+            }
         }
+        
         includeEmptyDirs = false
     }
-    include("**/jc320v25.1_kit/**")
+
     into(sdkRoot)
 }
 
 dependencies {
-    gp(files(gpJar) {
+    add(gp.name, files(gpJar) {
         builtBy(downloadGpJar)
     })
 
@@ -106,10 +129,11 @@ val tomlText = if (confFile.exists()) confFile.readText() else ""
 val appletAid = """APPLET_AID_HEX\s*=\s*"([A-Fa-f0-9]+)"""".toRegex().find(tomlText)?.groupValues?.get(1)
 val pkgAid = appletAid?.substring(0, 10)
 
-val buildApplet by tasks.registering {
+val buildApplet = tasks.register("buildApplet") {
     group = "javacard"
 
     dependsOn("compileJava")
+    dependsOn(extractSdk)
     dependsOn(downloadAntJar)
     dependsOn(downloadGpJar)
     dependsOn(rootProject.tasks.named("generateConstants"))
@@ -121,7 +145,7 @@ val buildApplet by tasks.registering {
     val capFile = layout.buildDirectory.file("card.cap")
     outputs.file(capFile)
 
-    val localSdkDir = sdkRoot.map { it.dir("jc320v25.1_kit").asFile.absolutePath }
+    val localSdkDir = sdkKit.map { it.asFile.absolutePath }
     val localAntJar = antJar.map { it.asFile.absolutePath }
     val localCapFile = capFile.map { it.asFile.absolutePath }
     val localClassesDir = layout.buildDirectory.dir("classes").map { it.asFile.absolutePath }
@@ -143,7 +167,7 @@ val buildApplet by tasks.registering {
 
             "javacard"("jckit" to sdkPath) {
                 "cap"(
-                    "targetsdk" to "3.0.5",
+                    "targetsdk" to javaCardApiVersion,
                     "aid" to localPkgAid,
                     "version" to "0.1",
                     "output" to capPath,
@@ -197,6 +221,7 @@ mapOf("Minter" to true, "User" to false).forEach { (type, isMinter) ->
 }
 
 tasks.named("compileJava") {
+    dependsOn(extractSdk)
     dependsOn(rootProject.tasks.named("generateConstants"))
 }
 

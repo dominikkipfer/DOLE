@@ -29,10 +29,15 @@ fun main() = application {
         this::class.java.getResourceAsStream("/DOLE.svg")!!.readAllBytes().decodeToSvgPainter(density = Density(1f))
     }
 
-    CoreWrapper.startGlobalSync(doleDir.absolutePath)
+    remember(doleDir.absolutePath) {
+        CoreWrapper.startGlobalSync(doleDir.absolutePath)
+        CoreWrapper.startBleAdvertising(doleDir.absolutePath)
+        true
+    }
 
     Window(
         onCloseRequest = {
+            CoreWrapper.stopBleAdvertising()
             CoreWrapper.stopGlobalSync()
             exitApplication()
         },

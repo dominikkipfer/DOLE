@@ -57,11 +57,10 @@ class WalletService(
 
                     val signatureBytes = CoreWrapper.hexToBytes(tx.signature)
 
-                    val senderIdBytes = CoreWrapper.hexToBytes(CoreWrapper.getPersonIdAsHex(senderPubKey))
                     val myIdBytes = CoreWrapper.hexToBytes(currentUserId)
 
                     val logPayload = ProtocolSerializer.buildLogPayload(
-                        tx.seq, Constants.OP_SEND, senderIdBytes, myIdBytes, tx.goc
+                        tx.seq, Constants.OP_SEND, myIdBytes, tx.goc
                     )
 
                     val payload = ProtocolSerializer.buildReceivePayload(
@@ -102,8 +101,9 @@ class WalletService(
         val payload = ProtocolSerializer.buildMintBurnPayload(amount)
         val response = card.processMint(payload)
 
+        val seq = ProtocolSerializer.parseSeqFromResponse(response)
         val sigHex = CoreWrapper.bytesToHex(ProtocolSerializer.parseSignatureFromResponse(response))
-        CoreWrapper.mint(amount, sigHex)
+        CoreWrapper.mint(amount, seq, sigHex)
     }
 
     fun burn(amount: Long) {
@@ -114,8 +114,9 @@ class WalletService(
         val payload = ProtocolSerializer.buildMintBurnPayload(amount)
         val response = card.processBurn(payload)
 
+        val seq = ProtocolSerializer.parseSeqFromResponse(response)
         val sigHex = CoreWrapper.bytesToHex(ProtocolSerializer.parseSignatureFromResponse(response))
-        CoreWrapper.burn(amount, sigHex)
+        CoreWrapper.burn(amount, seq, sigHex)
     }
 
     fun send(targetId: String, amount: Long, rustHistory: List<Transaction>) {
@@ -130,7 +131,7 @@ class WalletService(
             ?: throw IllegalStateException("Cannot send: Target peer certificate not discovered on ledger yet.")
         val targetPubKey = CoreWrapper.hexToBytes(targetPubKeyHex)
 
-        val targetCertificate = targetGenesis?.attachmentCertificate
+        val targetCertificate = targetGenesis.attachmentCertificate
             ?: throw IllegalStateException("Cannot send: Target peer certificate not discovered on ledger yet.")
 
         ensurePeerRegistered(targetPubKey, targetCertificate)
@@ -138,8 +139,9 @@ class WalletService(
         val payload = ProtocolSerializer.buildSendPayload(targetPubKey, amount)
         val response = card.processSend(payload)
 
+        val seq = ProtocolSerializer.parseSeqFromResponse(response)
         val sigHex = CoreWrapper.bytesToHex(ProtocolSerializer.parseSignatureFromResponse(response))
-        CoreWrapper.send(targetId, amount, sigHex)
+        CoreWrapper.send(targetId, amount, seq, sigHex)
     }
 
     fun close() {

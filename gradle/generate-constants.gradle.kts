@@ -67,7 +67,7 @@ tasks.register("generateConstants") {
 
                 javaCode += "    public static final byte[] $k = { $javaArr };\n"
                 ktCode += "    val $k = byteArrayOf($ktArr)\n"
-                rustCode += "pub const $k: [u8; ${tokens.size}] = [$numArr];\n"
+                rustCode += "#[rustfmt::skip]\npub const $k: [u8; ${tokens.size}] = [$numArr];\n"
             } else {
                 var sum = 0
                 v.split("+").forEach { t ->
@@ -84,8 +84,8 @@ tasks.register("generateConstants") {
                 constantsMap[k] = sum
                 val evalVal = if (v.contains("0x")) "0x" + sum.toString(16).uppercase() else sum.toString()
 
-                val isShort = k.startsWith("SW_") || k == "CARD_RAM_BUFFER_SIZE" || k == "CARD_MAX_PEERS"
-                val isInt = k == "CLA_PROPRIETARY"
+                val isInt = k == "CLA_PROPRIETARY" || sum > 0xFFFF
+                val isShort = !isInt && (k.startsWith("SW_") || k == "CARD_RAM_BUFFER_SIZE" || k == "CARD_MAX_PEERS" || sum > 0xFF)
 
                 val javaType = if (isShort) "short" else if (isInt) "int" else "byte"
                 val ktType = if (isShort) "Short" else if (isInt) "Int" else "Byte"

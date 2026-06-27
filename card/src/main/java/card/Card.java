@@ -380,7 +380,6 @@ public class Card extends Applet implements ExtendedLength {
         Util.arrayCopyNonAtomic(mathB, (short)0, peerData, peerSentOff, Constants.LONG_SIZE);
 
         ramBuffer[Constants.LOG_OFFSET_TYPE] = Constants.OP_SEND;
-        Util.arrayCopyNonAtomic(myId, (short)0, ramBuffer, Constants.LOG_OFFSET_AUTHOR, Constants.ID_SIZE);
         Util.arrayCopyNonAtomic(seqNumber, (short)0, ramBuffer, Constants.LOG_OFFSET_SEQ, Constants.LONG_SIZE);
         Util.arrayCopyNonAtomic(ramBuffer, SCRATCH_OFF, ramBuffer, Constants.LOG_SEND_OFFSET_TARGET, Constants.ID_SIZE);
         Util.arrayCopyNonAtomic(mathB, (short)0, ramBuffer, Constants.LOG_SEND_OFFSET_GOC, Constants.LONG_SIZE);
@@ -427,11 +426,6 @@ public class Card extends Applet implements ExtendedLength {
 
         short peerIdx = findPeer(buffer, keyOff);
         if (peerIdx == -1) ISOException.throwIt(Constants.SW_SECURITY_STATUS_NOT_SATISFIED);
-
-        hasher.doFinal(buffer, keyOff, keyLen, ramBuffer, SCRATCH_OFF);
-        if (Util.arrayCompare(buffer, (short)(logOff + Constants.LOG_OFFSET_AUTHOR), ramBuffer, SCRATCH_OFF, Constants.ID_SIZE) != 0) {
-            ISOException.throwIt(Constants.SW_WRONG_DATA);
-        }
 
         if (Util.arrayCompare(buffer, (short)(logOff + Constants.LOG_SEND_OFFSET_TARGET), myId, (short)0, Constants.ID_SIZE) != 0) {
             ISOException.throwIt(Constants.SW_WRONG_DATA);
@@ -509,23 +503,30 @@ public class Card extends Applet implements ExtendedLength {
         JCSystem.commitTransaction();
     }
 
-    /**
-     * Retrieves the device certificate.
-     */
     private short signAndBuildResponse(byte type, byte[] extraData, short extraLen, short totalLogSize) {
         ramBuffer[Constants.LOG_OFFSET_TYPE] = type;
-        Util.arrayCopyNonAtomic(myId, (short)0, ramBuffer, Constants.LOG_OFFSET_AUTHOR, Constants.ID_SIZE);
-        Util.arrayCopyNonAtomic(seqNumber, (short)0, ramBuffer, Constants.LOG_OFFSET_SEQ, Constants.LONG_SIZE);
+
+        boolean isGenesis = type == Constants.OP_GENESIS;
+        if (!isGenesis) {
+            Util.arrayCopyNonAtomic(seqNumber, (short)0, ramBuffer, Constants.LOG_OFFSET_SEQ, Constants.LONG_SIZE);
+        }
 
         if (extraData != null && extraLen > 0) {
             Util.arrayCopyNonAtomic(extraData, (short)0, ramBuffer, Constants.LOG_HEADER_SIZE, extraLen);
         }
 
         signer.init(myPrivateKey, Signature.MODE_SIGN);
-        short sigLen = signer.sign(ramBuffer, (short)0, totalLogSize, ramBuffer, totalLogSize);
+        short sigOff = isGenesis ? RESP_OFF : totalLogSize;
+        short sigLen = signer.sign(ramBuffer, (short)0, totalLogSize, ramBuffer, sigOff);
+
+        if (isGenesis) {
+            Util.arrayCopyNonAtomic(ramBuffer, sigOff, ramBuffer, (short)0, sigLen);
+            MathLib.increment(seqNumber);
+            return sigLen;
+        }
 
         Util.arrayCopyNonAtomic(seqNumber, (short)0, ramBuffer, RESP_OFF, Constants.LONG_SIZE);
-        Util.arrayCopyNonAtomic(ramBuffer, totalLogSize, ramBuffer, (short)(RESP_OFF + Constants.LONG_SIZE), sigLen);
+        Util.arrayCopyNonAtomic(ramBuffer, sigOff, ramBuffer, (short)(RESP_OFF + Constants.LONG_SIZE), sigLen);
         short respLen = (short)(Constants.LONG_SIZE + sigLen);
 
         Util.arrayCopyNonAtomic(ramBuffer, RESP_OFF, ramBuffer, (short)0, respLen);

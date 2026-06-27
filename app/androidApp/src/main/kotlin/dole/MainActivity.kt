@@ -26,6 +26,7 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
     private var multicastLock: WifiManager.MulticastLock? = null
     private var nfcAdapter: NfcAdapter? = null
     private var syncStarted = false
+    private var bleStarted = false
     private lateinit var storagePath: String
     private val smartCard = AndroidSmartCard(null)
 
@@ -48,7 +49,6 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
         }
 
         nfcAdapter = NfcAdapter.getDefaultAdapter(this)
-
         storagePath = applicationContext.filesDir.absolutePath
         val prefs = getSharedPreferences("dole_settings", MODE_PRIVATE)
         val settings = SharedPreferencesSettings(prefs)
@@ -66,7 +66,7 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
         }
 
         if (checkPermissions()) {
-            startNetworkSync()
+            startNetworkServices()
         }
     }
 
@@ -90,6 +90,7 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
     }
 
     override fun onDestroy() {
+        stopBleBroadcast()
         if (syncStarted) {
             CoreWrapper.stopGlobalSync()
             syncStarted = false
@@ -113,11 +114,16 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
             grantResults.all { it == PackageManager.PERMISSION_GRANTED }
 
         if (granted) {
-            Log.i("DOLE", "Network permissions granted; starting sync")
-            startNetworkSync()
+            Log.i("DOLE", "Network permissions granted; starting sync and BLE broadcast")
+            startNetworkServices()
         } else {
             Log.w("DOLE", "Network permissions denied; sync engine not started")
         }
+    }
+
+    private fun startNetworkServices() {
+        startNetworkSync()
+        startBleBroadcast()
     }
 
     private fun startNetworkSync() {
@@ -129,6 +135,24 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
         CoreWrapper.startGlobalSync(storagePath)
         syncStarted = true
         Log.i("DOLE", "Sync engine start requested")
+    }
+
+    private fun startBleBroadcast() {
+        if (bleStarted) {
+            return
+        }
+        if (CoreWrapper.startBleAdvertising(storagePath)) {
+            bleStarted = true
+            Log.i("DOLE", "BLE transport start requested")
+        }
+    }
+
+    private fun stopBleBroadcast() {
+        if (!bleStarted) {
+            return
+        }
+        CoreWrapper.stopBleAdvertising()
+        bleStarted = false
     }
 
     private fun acquireMulticastLock() {
@@ -169,6 +193,12 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
             }
             if (checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE) != PackageManager.PERMISSION_GRANTED) {
                 missing.add(Manifest.permission.BLUETOOTH_ADVERTISE)
+            }
+            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                missing.add(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+            if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                missing.add(Manifest.permission.ACCESS_COARSE_LOCATION)
             }
             if (Build.VERSION.SDK_INT >= 33) {
                 if (checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED) {

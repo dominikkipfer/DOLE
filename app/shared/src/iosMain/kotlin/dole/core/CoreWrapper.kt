@@ -13,12 +13,25 @@ var swiftGetPersonIdAsHexAction: ((ByteArray) -> String)? = null
 
 actual object CoreWrapper {
 
-	actual fun initPrototype(listener: UIStateListener, storagePath: String) {
+	actual fun startGlobalSync(storagePath: String) = Unit
+
+	actual fun stopGlobalSync() = Unit
+
+	actual fun initLedger(listener: UIStateListener, storagePath: String, publicKeyId: String, publicKeyFull: String) {
 		swiftInitAction?.invoke(listener, storagePath)
 	}
-	actual fun mint(amount: Int) { swiftMintAction?.invoke(amount) }
-	actual fun burn(amount: Int) { swiftBurnAction?.invoke(amount) }
-	actual fun send(targetPubKey: String, amount: Int) { swiftSendAction?.invoke(targetPubKey, amount) }
+
+	actual fun shutdown() = Unit
+
+	actual fun genesis(sigHex: String, certHex: String) = Unit
+
+	actual fun mint(amount: Long, seq: Long, sigHex: String) { swiftMintAction?.invoke(amount.toInt()) }
+
+	actual fun burn(amount: Long, seq: Long, sigHex: String) { swiftBurnAction?.invoke(amount.toInt()) }
+
+	actual fun send(targetPubKey: String, amount: Long, seq: Long, sigHex: String) {
+		swiftSendAction?.invoke(targetPubKey, amount.toInt())
+	}
 
 	actual fun bytesToHex(bytes: ByteArray): String {
 		return swiftBytesToHexAction?.invoke(bytes) ?: ""
@@ -35,4 +48,10 @@ actual object CoreWrapper {
 	actual fun getPersonIdAsHex(pubKey: ByteArray): String {
 		return swiftGetPersonIdAsHexAction?.invoke(pubKey) ?: ""
 	}
+
+	actual fun verifyCardCertificate(pubKey: ByteArray, cert: ByteArray): Boolean = false
+
+	actual fun startBleAdvertising(storagePath: String): Boolean = false
+
+	actual fun stopBleAdvertising() = Unit
 }

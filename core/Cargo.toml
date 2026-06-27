@@ -11,22 +11,28 @@ name = "uniffi-bindgen"
 path = "uniffi-bindgen.rs"
 
 [dependencies]
-uniffi = { version = "0.31.1", features = ["cli"] }
-gix = { version = "0.84.0", features = ["max-performance"] }
+uniffi = { version = "0.31.2", features = ["cli"] }
+gix = { version = "0.85.0", features = ["max-performance"] }
 sha2 = "0.11.0"
 hex = "0.4.3"
-p256 = { version = "0.14.0-rc.9", features = ["ecdsa"] }
-iroh = { version = "1.0.0-rc.1"}
-iroh-gossip = "0.100.0"
-swarm-discovery = "0.6.1"
+modular-bitfield = "0.13.1"
+p256 = { version = "0.14.0-rc.14", features = ["ecdsa"] }
+iroh = "1.0.0"
+iroh-gossip = "0.101.0"
+swarm-discovery = "0.6.2"
 data-encoding = "2.11.0"
+getrandom = "0.4.3"
 tokio = { version = "1.52.3", features = ["full"] }
 n0-future = "0.3.2"
 
+log = "0.4.33"
+[target.'cfg(not(target_os = "android"))'.dependencies]
+env_logger = "0.11.10"
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.15.1"
 jni = "0.22.4"
 ndk-context = "0.1.1"
 
-log = "0.4.32"
-env_logger = "0.11.10"
-[target.'cfg(target_os = "android")'.dependencies]
-android_logger = "0.15.1"
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Devices_Bluetooth", "Devices_Bluetooth_Advertisement", "Foundation", "Storage_Streams", "Win32_System_WinRT"] }

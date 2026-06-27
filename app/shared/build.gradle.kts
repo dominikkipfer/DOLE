@@ -83,14 +83,14 @@ kotlin {
     }
 }
 
-val buildJvmRust = tasks.register<Exec>("buildJvmRust") {
+val buildHostRust = tasks.register<Exec>("buildHostRust") {
     dependsOn(rootProject.tasks.named("generateConstants"))
     workingDir = coreDir
     commandLine("cargo", "build", "--release")
 }
 
 val syncJvmRustBinaries = tasks.register<Copy>("syncJvmRustBinaries") {
-    dependsOn(buildJvmRust)
+    dependsOn(buildHostRust)
     from("${coreDir}/target/release") {
         include("*.dll", "*.dylib", "*.so")
     }
@@ -98,7 +98,7 @@ val syncJvmRustBinaries = tasks.register<Copy>("syncJvmRustBinaries") {
 }
 
 val generateUniffiBindings = tasks.register<Exec>("generateUniffiBindings") {
-    dependsOn(buildJvmRust)
+    dependsOn(buildHostRust)
     workingDir = coreDir
     val libName = System.mapLibraryName("core")
     val libPath = "target/release/$libName"
@@ -107,10 +107,23 @@ val generateUniffiBindings = tasks.register<Exec>("generateUniffiBindings") {
         "--",
         "generate", "--library", libPath, "--language", "kotlin", "--out-dir", uniffiGenDir.absolutePath, "--no-format"
     )
+    doLast {
+        val generatedFile = uniffiGenDir.resolve("dole/core/core.kt")
+        if (!generatedFile.exists()) {
+            return@doLast
+        }
+
+        val source = generatedFile.readText()
+        val unsuppressed = "public fun uniffiEnsureInitialized() {\n"
+        val suppressed = "@Suppress(\"UNUSED_EXPRESSION\")\n$unsuppressed"
+        if (!source.contains(suppressed)) {
+            generatedFile.writeText(source.replace(unsuppressed, suppressed))
+        }
+    }
 }
 
 val buildAndroidRust = tasks.register<Exec>("buildAndroidRust") {
-    dependsOn(generateUniffiBindings)
+    dependsOn(rootProject.tasks.named("generateConstants"))
     workingDir = coreDir
     commandLine("cargo", "ndk", "-t", "arm64-v8a", "-o", "${coreDir}/dist/android/jniLibs", "build", "--release")
 }
@@ -158,8 +171,13 @@ tasks.matching { it.name == "jvmProcessResources" || it.name == "jvmTestProcessR
     dependsOn(syncJvmRustBinaries)
 }
 
-tasks.matching { it.name.contains("XCFramework", ignoreCase = true) || it.name.startsWith("link") }.configureEach {
-    dependsOn(generateUniffiSwiftBindings)
+if (HostManager.hostIsMac) {
+    tasks.matching {
+        it.name.contains("Ios", ignoreCase = true) &&
+                (it.name.contains("XCFramework", ignoreCase = true) || it.name.startsWith("link"))
+    }.configureEach {
+        dependsOn(generateUniffiSwiftBindings)
+    }
 }
 
 aboutLibraries {

@@ -82,9 +82,7 @@ object ProtocolSerializer {
         return buffer
     }
 
-    fun buildLogPayload(seq: Long, type: Byte, authorId: ByteArray, targetId: ByteArray?, goc: Long): ByteArray {
-        require(authorId.size == Constants.ID_SIZE.toInt()) { "Author ID must be ${Constants.ID_SIZE} bytes" }
-
+    fun buildLogPayload(seq: Long, type: Byte, targetId: ByteArray?, goc: Long): ByteArray {
         val payloadSize = when (type) {
             Constants.OP_GENESIS -> Constants.LOG_GENESIS_SIZE.toInt()
             Constants.OP_MINT, Constants.OP_BURN -> Constants.LOG_MINTBURN_SIZE.toInt()
@@ -94,7 +92,6 @@ object ProtocolSerializer {
 
         val buffer = ByteArray(payloadSize)
         buffer[Constants.LOG_OFFSET_TYPE.toInt()] = type
-        authorId.copyInto(buffer, Constants.LOG_OFFSET_AUTHOR.toInt())
         buffer.putLong(Constants.LOG_OFFSET_SEQ.toInt(), seq)
 
         when (type) {
@@ -119,6 +116,11 @@ object ProtocolSerializer {
     fun parseSignatureFromResponse(response: ByteArray): ByteArray {
         require(response.size > Constants.LONG_SIZE.toInt()) { "Response too short" }
         return response.copyOfRange(Constants.LONG_SIZE.toInt(), response.size)
+    }
+
+    fun parseGenesisSignatureFromResponse(response: ByteArray): ByteArray {
+        require(response.isNotEmpty()) { "Response too short" }
+        return response
     }
 
     fun validateAndConvertPin(pin: CharArray): ByteArray {
