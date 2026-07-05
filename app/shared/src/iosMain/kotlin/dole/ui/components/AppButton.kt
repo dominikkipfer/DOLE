@@ -1,17 +1,46 @@
 package dole.ui.components
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.interop.UIKitView
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.useContents
+import platform.Foundation.NSProcessInfo
 import platform.UIKit.UIAction
 import platform.UIKit.UIButton
 import platform.UIKit.UIButtonConfiguration
 import platform.UIKit.UIButtonTypeSystem
 import platform.UIKit.UIColor
 import platform.UIKit.UIControlEventTouchUpInside
+import platform.UIKit.UIControlEventValueChanged
 import platform.UIKit.UIControlStateNormal
+import platform.UIKit.UISwitch
+
+private val supportsLiquidGlass: Boolean by lazy {
+    NSProcessInfo.processInfo.operatingSystemVersion.useContents { majorVersion >= 26 }
+}
+
+private fun Color.toUIColor() = UIColor(
+    red = red.toDouble(),
+    green = green.toDouble(),
+    blue = blue.toDouble(),
+    alpha = alpha.toDouble()
+)
 
 @OptIn(ExperimentalForeignApi::class)
 @Composable
@@ -22,45 +51,25 @@ actual fun AppButton(
     backgroundColor: Color,
     textColor: Color
 ) {
+    val currentOnClick by rememberUpdatedState(onClick)
     UIKitView(
         factory = {
-            val button = UIButton()
-            val config = UIButtonConfiguration.tintedButtonConfiguration()
-
-            config.baseBackgroundColor = UIColor(
-                red = backgroundColor.red.toDouble(),
-                green = backgroundColor.green.toDouble(),
-                blue = backgroundColor.blue.toDouble(),
-                alpha = backgroundColor.alpha.toDouble()
-            )
-            config.baseForegroundColor = UIColor(
-                red = textColor.red.toDouble(),
-                green = textColor.green.toDouble(),
-                blue = textColor.blue.toDouble(),
-                alpha = textColor.alpha.toDouble()
-            )
-            button.configuration = config
-
-            val action = UIAction.actionWithHandler { _ -> onClick() }
+            val button = UIButton.buttonWithType(UIButtonTypeSystem)
+            val action = UIAction.actionWithHandler { _ -> currentOnClick() }
             button.addAction(action, forControlEvents = UIControlEventTouchUpInside)
-
             button
         },
         update = { button ->
-            val config = button.configuration ?: UIButtonConfiguration.tintedButtonConfiguration()
+            val config = if (supportsLiquidGlass) {
+                UIButtonConfiguration.prominentGlassButtonConfiguration()
+            } else {
+                UIButtonConfiguration.tintedButtonConfiguration().apply {
+                    baseBackgroundColor = backgroundColor.toUIColor()
+                }
+            }
             config.title = text
-            config.baseBackgroundColor = UIColor(
-                red = backgroundColor.red.toDouble(),
-                green = backgroundColor.green.toDouble(),
-                blue = backgroundColor.blue.toDouble(),
-                alpha = backgroundColor.alpha.toDouble()
-            )
-            config.baseForegroundColor = UIColor(
-                red = textColor.red.toDouble(),
-                green = textColor.green.toDouble(),
-                blue = textColor.blue.toDouble(),
-                alpha = textColor.alpha.toDouble()
-            )
+            config.baseForegroundColor = textColor.toUIColor()
+            button.tintColor = backgroundColor.toUIColor()
             button.configuration = config
         },
         modifier = modifier
@@ -75,29 +84,17 @@ actual fun AppTextButton(
     modifier: Modifier,
     textColor: Color
 ) {
+    val currentOnClick by rememberUpdatedState(onClick)
     UIKitView(
         factory = {
             val button = UIButton.buttonWithType(UIButtonTypeSystem)
-            val uiColor = UIColor(
-                red = textColor.red.toDouble(),
-                green = textColor.green.toDouble(),
-                blue = textColor.blue.toDouble(),
-                alpha = textColor.alpha.toDouble()
-            )
-            button.setTitleColor(uiColor, UIControlStateNormal)
-            val action = UIAction.actionWithHandler { _ -> onClick() }
+            val action = UIAction.actionWithHandler { _ -> currentOnClick() }
             button.addAction(action, forControlEvents = UIControlEventTouchUpInside)
             button
         },
         update = { button ->
-            val uiColor = UIColor(
-                red = textColor.red.toDouble(),
-                green = textColor.green.toDouble(),
-                blue = textColor.blue.toDouble(),
-                alpha = textColor.alpha.toDouble()
-            )
             button.setTitle(text, UIControlStateNormal)
-            button.setTitleColor(uiColor, UIControlStateNormal)
+            button.setTitleColor(textColor.toUIColor(), UIControlStateNormal)
         },
         modifier = modifier
     )
@@ -111,35 +108,27 @@ actual fun AppOutlinedButton(
     modifier: Modifier,
     textColor: Color
 ) {
+    val currentOnClick by rememberUpdatedState(onClick)
     UIKitView(
         factory = {
             val button = UIButton.buttonWithType(UIButtonTypeSystem)
-            button.layer.borderWidth = 1.0
-            button.layer.cornerRadius = 12.0
-
-            val uiColor = UIColor(
-                red = textColor.red.toDouble(),
-                green = textColor.green.toDouble(),
-                blue = textColor.blue.toDouble(),
-                alpha = textColor.alpha.toDouble()
-            )
-            button.layer.borderColor = uiColor.CGColor
-            button.setTitleColor(uiColor, UIControlStateNormal)
-
-            val action = UIAction.actionWithHandler { _ -> onClick() }
+            val action = UIAction.actionWithHandler { _ -> currentOnClick() }
             button.addAction(action, forControlEvents = UIControlEventTouchUpInside)
             button
         },
         update = { button ->
-            val uiColor = UIColor(
-                red = textColor.red.toDouble(),
-                green = textColor.green.toDouble(),
-                blue = textColor.blue.toDouble(),
-                alpha = textColor.alpha.toDouble()
-            )
-            button.setTitle(text, UIControlStateNormal)
-            button.layer.borderColor = uiColor.CGColor
-            button.setTitleColor(uiColor, UIControlStateNormal)
+            if (supportsLiquidGlass) {
+                val config = UIButtonConfiguration.glassButtonConfiguration()
+                config.title = text
+                config.baseForegroundColor = textColor.toUIColor()
+                button.configuration = config
+            } else {
+                button.layer.borderWidth = 1.0
+                button.layer.cornerRadius = 12.0
+                button.layer.borderColor = textColor.toUIColor().CGColor
+                button.setTitle(text, UIControlStateNormal)
+                button.setTitleColor(textColor.toUIColor(), UIControlStateNormal)
+            }
         },
         modifier = modifier
     )
@@ -147,12 +136,13 @@ actual fun AppOutlinedButton(
 
 @OptIn(ExperimentalForeignApi::class)
 @Composable
-actual fun AppSwitchRow(
+actual fun AppSwitchButton(
     title: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier
 ) {
+    val currentOnCheckedChange by rememberUpdatedState(onCheckedChange)
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -166,16 +156,17 @@ actual fun AppSwitchRow(
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onBackground
         )
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
-                checkedTrackColor = Color(0xFF34C759),
-                uncheckedThumbColor = Color.White,
-                uncheckedTrackColor = Color(0xFFE9E9EB),
-                uncheckedBorderColor = Color.Transparent
-            )
+        UIKitView(
+            factory = {
+                val switch = UISwitch()
+                val action = UIAction.actionWithHandler { _ -> currentOnCheckedChange(switch.on) }
+                switch.addAction(action, forControlEvents = UIControlEventValueChanged)
+                switch
+            },
+            update = { switch ->
+                if (switch.on != checked) switch.setOn(checked, animated = false)
+            },
+            modifier = Modifier.width(51.dp).height(31.dp)
         )
     }
 }

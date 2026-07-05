@@ -4,5 +4,7 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>DOLE uses Bluetooth to exchange wallet sync data with nearby devices.</string>
 </dict>
 </plist>

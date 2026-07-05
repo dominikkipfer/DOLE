@@ -43,6 +43,14 @@ class AccountStorage(private val settings: Settings) {
         }
     }
 
+    fun isScreenCaptureBlocked(accountId: String): Boolean {
+        return settings.getBoolean("screencap_$accountId", false)
+    }
+
+    fun setScreenCaptureBlocked(accountId: String, blocked: Boolean) {
+        settings.putBoolean("screencap_$accountId", blocked)
+    }
+
     fun isBiometricsEnabled(accountId: String): Boolean {
         return settings.getBoolean("bio_$accountId", false)
     }
@@ -69,5 +77,7 @@ class AccountStorage(private val settings: Settings) {
         settings.remove("minter_$accountId")
         settings.remove("recv_$accountId")
         settings.remove("pending_$accountId")
+        settings.remove("screencap_$accountId")
+        settings.remove("bio_$accountId")
     }
 }

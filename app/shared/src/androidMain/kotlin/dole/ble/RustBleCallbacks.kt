@@ -5,35 +5,35 @@ import android.bluetooth.le.AdvertisingSetCallback
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 
-class RustAdvertisingSetCallback : AdvertisingSetCallback() {
+class AdvertisingSetCallback : AdvertisingSetCallback() {
     override fun onAdvertisingSetStarted(advertisingSet: AdvertisingSet?, txPower: Int, status: Int) {
-        RustBleNative.onAdvertisingSetStarted(advertisingSet, txPower, status)
+        BleNative.onAdvertisingSetStarted(advertisingSet, txPower, status)
     }
 
     override fun onAdvertisingDataSet(advertisingSet: AdvertisingSet?, status: Int) {
-        RustBleNative.onAdvertisingDataSet(status)
+        BleNative.onAdvertisingDataSet(status)
     }
 
     override fun onAdvertisingSetStopped(advertisingSet: AdvertisingSet?) {
-        RustBleNative.onAdvertisingSetStopped()
+        BleNative.onAdvertisingSetStopped()
     }
 }
 
-class RustScanCallback : ScanCallback() {
+class ScanCallback : ScanCallback() {
     override fun onScanResult(callbackType: Int, result: ScanResult) {
-        RustBleNative.onScanResult(result)
+        BleNative.onScanResult(result)
     }
 
     override fun onBatchScanResults(results: MutableList<ScanResult>) {
-        results.forEach(RustBleNative::onScanResult)
+        results.forEach(BleNative::onScanResult)
     }
 
     override fun onScanFailed(errorCode: Int) {
-        RustBleNative.onScanFailed(errorCode)
+        BleNative.onScanFailed(errorCode)
     }
 }
 
-object RustBleNative {
+object BleNative {
     external fun onAdvertisingSetStarted(advertisingSet: AdvertisingSet?, txPower: Int, status: Int)
     external fun onAdvertisingDataSet(status: Int)
     external fun onAdvertisingSetStopped()

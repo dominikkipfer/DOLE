@@ -12,7 +12,7 @@ use crate::constants::{BLE_PAYLOAD_DWELL_MS, BLE_SERVICE_DATA_OVERHEAD_SIZE, BLE
 
 use super::{
     LOG_TARGET, advertiser_started, advertiser_stopped, build_initial_payload, ingest_payload,
-    log_payload, next_payload,
+    log_payload, next_payload
 };
 
 static STATE: LazyLock<Mutex<AndroidBleState>> = LazyLock::new(|| Mutex::new(AndroidBleState::default()));
@@ -34,6 +34,7 @@ struct AndroidBleState {
     service_uuid: Option<GlobalObject>,
     active: bool,
     payload_worker_started: bool,
+    worker_generation: u64
 }
 
 pub(super) fn start(storage_path: &str) -> bool {
@@ -51,12 +52,7 @@ pub(super) fn start(storage_path: &str) -> bool {
     }
 }
 
-fn start_with_env(
-    env: &mut Env<'_>,
-    vm: &JavaVM,
-    context: GlobalObject,
-    storage_path: &str,
-) -> jni::errors::Result<bool> {
+fn start_with_env(env: &mut Env<'_>, vm: &JavaVM, context: GlobalObject, storage_path: &str) -> jni::errors::Result<bool> {
     let service_uuid = match build_parcel_uuid(env) {
         Ok(uuid) => uuid,
         Err(e) => {
@@ -73,16 +69,16 @@ fn start_with_env(
         }
     };
 
-    if !call_bool(env, adapter.as_obj(), "isEnabled") {
+    if !call_bool(env, &adapter, "isEnabled") {
         log::warn!(target: LOG_TARGET, "Android BLE disabled because Bluetooth is off");
         return Ok(false);
     }
-    if !call_bool(env, adapter.as_obj(), "isLeExtendedAdvertisingSupported") {
+    if !call_bool(env, &adapter, "isLeExtendedAdvertisingSupported") {
         log::warn!(target: LOG_TARGET, "Android BLE disabled because extended advertising is not supported");
         return Ok(false);
     }
 
-    let max_adv_len = match call_int(env, adapter.as_obj(), "getLeMaximumAdvertisingDataLength") {
+    let max_adv_len = match call_int(env, &adapter, "getLeMaximumAdvertisingDataLength") {
         Ok(value) if value > 0 => value as usize,
         Ok(value) => {
             log::warn!(
@@ -114,10 +110,10 @@ fn start_with_env(
 
     let advertiser = match call_object(
         env,
-        adapter.as_obj(),
+        &adapter,
         "getBluetoothLeAdvertiser",
         "()Landroid/bluetooth/le/BluetoothLeAdvertiser;",
-        &[],
+        &[]
     ) {
         Ok(obj) if !obj.is_null() => match env.new_global_ref(obj) {
             Ok(global) => global,
@@ -134,10 +130,10 @@ fn start_with_env(
 
     let scanner = match call_object(
         env,
-        adapter.as_obj(),
+        &adapter,
         "getBluetoothLeScanner",
         "()Landroid/bluetooth/le/BluetoothLeScanner;",
-        &[],
+        &[]
     ) {
         Ok(obj) if !obj.is_null() => match env.new_global_ref(obj) {
             Ok(global) => global,
@@ -153,14 +149,14 @@ fn start_with_env(
     };
 
     let advertising_callback =
-        match new_global_object(env, "dole/ble/RustAdvertisingSetCallback", "()V", &[]) {
+        match new_global_object(env, "dole/ble/AdvertisingSetCallback", "()V", &[]) {
             Ok(obj) => obj,
             Err(e) => {
                 log::error!(target: LOG_TARGET, "Android BLE advertising callback missing: {e:?}");
                 return Ok(false);
             }
         };
-    let scan_callback = match new_global_object(env, "dole/ble/RustScanCallback", "()V", &[]) {
+    let scan_callback = match new_global_object(env, "dole/ble/ScanCallback", "()V", &[]) {
         Ok(obj) => obj,
         Err(e) => {
             log::error!(target: LOG_TARGET, "Android BLE scan callback missing: {e:?}");
@@ -214,7 +210,7 @@ pub(super) fn stop() {
             state.advertiser.take(),
             state.advertising_callback.take(),
             state.scanner.take(),
-            state.scan_callback.take(),
+            state.scan_callback.take()
         )
     };
 
@@ -228,7 +224,7 @@ pub(super) fn stop() {
                 scanner.as_obj(),
                 "stopScan",
                 "(Landroid/bluetooth/le/ScanCallback;)V",
-                &[JValue::Object(callback.as_obj())],
+                &[JValue::Object(callback.as_obj())]
             );
         }
         if let (Some(advertiser), Some(callback)) = (advertiser, advertising_callback) {
@@ -237,7 +233,7 @@ pub(super) fn stop() {
                 advertiser.as_obj(),
                 "stopAdvertisingSet",
                 "(Landroid/bluetooth/le/AdvertisingSetCallback;)V",
-                &[JValue::Object(callback.as_obj())],
+                &[JValue::Object(callback.as_obj())]
             );
         }
         Ok::<(), jni::errors::Error>(())
@@ -256,64 +252,65 @@ pub(super) fn stop() {
 }
 
 fn start_payload_worker_once() {
-    let should_start = {
+    let generation = {
         let Ok(mut state) = STATE.lock() else {
             return;
         };
         if !state.active || state.payload_worker_started {
-            false
-        } else {
-            state.payload_worker_started = true;
-            true
+            return;
         }
+        state.payload_worker_started = true;
+        state.worker_generation += 1;
+        state.worker_generation
     };
-    if !should_start {
-        return;
-    }
 
-    thread::spawn(|| {
-        run_payload_worker();
-        if let Ok(mut state) = STATE.lock() {
+    thread::spawn(move || {
+        run_payload_worker(generation);
+        if let Ok(mut state) = STATE.lock()
+            && state.worker_generation == generation
+        {
             state.payload_worker_started = false;
         }
     });
 }
 
-fn run_payload_worker() {
-    loop {
-        thread::sleep(Duration::from_millis(BLE_PAYLOAD_DWELL_MS as u64));
+fn run_payload_worker(generation: u64) {
+    let Some(vm) = state_vm_clone() else {
+        return;
+    };
+    let _ = vm.attach_current_thread(|env| -> jni::errors::Result<()> {
+        loop {
+            thread::sleep(Duration::from_millis(BLE_PAYLOAD_DWELL_MS as u64));
 
-        let (active, storage_path, max_payload_bytes) = {
-            let Ok(state) = STATE.lock() else {
-                return;
+            let (active, storage_path, max_payload_bytes) = {
+                let Ok(state) = STATE.lock() else {
+                    return Ok(());
+                };
+                if state.worker_generation != generation {
+                    return Ok(());
+                }
+                (
+                    state.active,
+                    state.storage_path.clone(),
+                    state.max_payload_bytes
+                )
             };
-            (
-                state.active,
-                state.storage_path.clone(),
-                state.max_payload_bytes,
-            )
-        };
-        if !active {
-            return;
-        }
-        let Some(storage_path) = storage_path else {
-            continue;
-        };
-        if max_payload_bytes == 0 {
-            return;
-        }
-        let Some(payload) = next_payload(&storage_path, max_payload_bytes) else {
-            return;
-        };
+            if !active || max_payload_bytes == 0 {
+                return Ok(());
+            }
+            let Some(storage_path) = storage_path else {
+                continue;
+            };
+            let Some(payload) = next_payload(&storage_path, max_payload_bytes) else {
+                return Ok(());
+            };
 
-        let Some(vm) = state_vm_clone() else {
-            continue;
-        };
-        let _ = vm.attach_current_thread(|env| {
-            update_advertising_payload(env, &payload);
-            Ok::<(), jni::errors::Error>(())
-        });
-    }
+            env.with_local_frame(16, |env| -> jni::errors::Result<()> {
+                update_advertising_payload(env, &payload);
+                Ok(())
+            })?;
+        }
+    });
 }
 
 fn state_vm_clone() -> Option<JavaVM> {
@@ -322,7 +319,7 @@ fn state_vm_clone() -> Option<JavaVM> {
 }
 
 fn start_advertising(env: &mut Env<'_>, payload: &[u8]) -> bool {
-    let (advertiser, callback) = {
+    let (advertiser, callback, service_uuid) = {
         let Ok(state) = STATE.lock() else {
             return false;
         };
@@ -332,13 +329,19 @@ fn start_advertising(env: &mut Env<'_>, payload: &[u8]) -> bool {
         let Some(callback) = state.advertising_callback.as_ref() else {
             return false;
         };
+        let Some(service_uuid) = state.service_uuid.as_ref() else {
+            return false;
+        };
         let Ok(advertiser) = env.new_local_ref(advertiser.as_obj()) else {
             return false;
         };
         let Ok(callback) = env.new_local_ref(callback.as_obj()) else {
             return false;
         };
-        (advertiser, callback)
+        let Ok(service_uuid) = env.new_local_ref(service_uuid.as_obj()) else {
+            return false;
+        };
+        (advertiser, callback, service_uuid)
     };
 
     let params = match build_advertising_set_parameters(env) {
@@ -348,7 +351,7 @@ fn start_advertising(env: &mut Env<'_>, payload: &[u8]) -> bool {
             return false;
         }
     };
-    let data = match build_advertise_data(env, payload) {
+    let data = match build_advertise_data(env, &service_uuid, payload) {
         Ok(data) => data,
         Err(e) => {
             log::error!(target: LOG_TARGET, "Android BLE advertise data build failed: {e:?}");
@@ -363,13 +366,13 @@ fn start_advertising(env: &mut Env<'_>, payload: &[u8]) -> bool {
         "startAdvertisingSet",
         "(Landroid/bluetooth/le/AdvertisingSetParameters;Landroid/bluetooth/le/AdvertiseData;Landroid/bluetooth/le/AdvertiseData;Landroid/bluetooth/le/PeriodicAdvertisingParameters;Landroid/bluetooth/le/AdvertiseData;Landroid/bluetooth/le/AdvertisingSetCallback;)V",
         &[
-            JValue::Object(params.as_obj()),
-            JValue::Object(data.as_obj()),
+            JValue::Object(&params),
+            JValue::Object(&data),
             JValue::Object(&null),
             JValue::Object(&null),
             JValue::Object(&null),
-            JValue::Object(&callback),
-        ],
+            JValue::Object(&callback)
+        ]
     );
     if let Err(e) = result {
         log::error!(target: LOG_TARGET, "Android BLE startAdvertisingSet failed: {e:?}");
@@ -381,7 +384,7 @@ fn start_advertising(env: &mut Env<'_>, payload: &[u8]) -> bool {
 }
 
 fn update_advertising_payload(env: &mut Env<'_>, payload: &[u8]) {
-    let advertising_set = {
+    let (advertising_set, service_uuid) = {
         let Ok(mut state) = STATE.lock() else {
             return;
         };
@@ -389,19 +392,24 @@ fn update_advertising_payload(env: &mut Env<'_>, payload: &[u8]) {
             return;
         }
         state.own_payload = Some(payload.to_vec());
-        let Some(advertising_set) = state.advertising_set.as_ref() else {
+        let (Some(advertising_set), Some(service_uuid)) =
+            (state.advertising_set.as_ref(), state.service_uuid.as_ref())
+        else {
             return;
         };
-        match env.new_local_ref(advertising_set.as_obj()) {
-            Ok(advertising_set) => advertising_set,
-            Err(e) => {
+        match (
+            env.new_local_ref(advertising_set.as_obj()),
+            env.new_local_ref(service_uuid.as_obj())
+        ) {
+            (Ok(advertising_set), Ok(service_uuid)) => (advertising_set, service_uuid),
+            (Err(e), _) | (_, Err(e)) => {
                 log::warn!(target: LOG_TARGET, "Android BLE advertising set local ref failed: {e:?}");
                 return;
             }
         }
     };
 
-    let Ok(data) = build_advertise_data(env, payload) else {
+    let Ok(data) = build_advertise_data(env, &service_uuid, payload) else {
         return;
     };
     let result = call_method_value(
@@ -409,7 +417,7 @@ fn update_advertising_payload(env: &mut Env<'_>, payload: &[u8]) {
         &advertising_set,
         "setAdvertisingData",
         "(Landroid/bluetooth/le/AdvertiseData;)V",
-        &[JValue::Object(data.as_obj())],
+        &[JValue::Object(&data)]
     );
     if let Err(e) = result {
         log::warn!(target: LOG_TARGET, "Android BLE setAdvertisingData failed: {e:?}");
@@ -461,7 +469,7 @@ fn start_scanning(env: &mut Env<'_>) -> bool {
         "java/util/Collections",
         "singletonList",
         "(Ljava/lang/Object;)Ljava/util/List;",
-        &[JValue::Object(filter.as_obj())],
+        &[JValue::Object(&filter)]
     ) {
         Ok(value) => match value.l() {
             Ok(obj) => obj,
@@ -483,9 +491,9 @@ fn start_scanning(env: &mut Env<'_>) -> bool {
         "(Ljava/util/List;Landroid/bluetooth/le/ScanSettings;Landroid/bluetooth/le/ScanCallback;)V",
         &[
             JValue::Object(&filters),
-            JValue::Object(settings.as_obj()),
-            JValue::Object(&callback),
-        ],
+            JValue::Object(&settings),
+            JValue::Object(&callback)
+        ]
     );
     if let Err(e) = result {
         log::error!(target: LOG_TARGET, "Android BLE startScan failed: {e:?}");
@@ -495,12 +503,12 @@ fn start_scanning(env: &mut Env<'_>) -> bool {
     true
 }
 
-fn build_advertising_set_parameters(env: &mut Env<'_>) -> jni::errors::Result<GlobalObject> {
+fn build_advertising_set_parameters<'local>(env: &mut Env<'local>) -> jni::errors::Result<JObject<'local>> {
     let builder = new_object(
         env,
         "android/bluetooth/le/AdvertisingSetParameters$Builder",
         "()V",
-        &[],
+        &[]
     )?;
     let ret = "android/bluetooth/le/AdvertisingSetParameters$Builder";
     chain_bool(env, &builder, "setLegacyMode", ret, false)?;
@@ -509,27 +517,25 @@ fn build_advertising_set_parameters(env: &mut Env<'_>) -> jni::errors::Result<Gl
     chain_bool(env, &builder, "setAnonymous", ret, false)?;
     chain_bool(env, &builder, "setIncludeTxPower", ret, false)?;
 
-    let obj = call_method_value(
+    call_object(
         env,
         &builder,
         "build",
         "()Landroid/bluetooth/le/AdvertisingSetParameters;",
-        &[],
-    )?
-    .l()?;
-    env.new_global_ref(obj)
+        &[]
+    )
 }
 
-fn build_advertise_data(env: &mut Env<'_>, payload: &[u8]) -> jni::errors::Result<GlobalObject> {
-    let service_uuid = {
-        let state = STATE.lock().unwrap();
-        env.new_local_ref(state.service_uuid.as_ref().unwrap().as_obj())?
-    };
+fn build_advertise_data<'local>(
+    env: &mut Env<'local>,
+    service_uuid: &JObject<'_>,
+    payload: &[u8]
+) -> jni::errors::Result<JObject<'local>> {
     let builder = new_object(
         env,
         "android/bluetooth/le/AdvertiseData$Builder",
         "()V",
-        &[],
+        &[]
     )?;
     let ret = "android/bluetooth/le/AdvertiseData$Builder";
     chain_bool(env, &builder, "setIncludeDeviceName", ret, false)?;
@@ -541,38 +547,31 @@ fn build_advertise_data(env: &mut Env<'_>, payload: &[u8]) -> jni::errors::Resul
         &builder,
         "addServiceData",
         "(Landroid/os/ParcelUuid;[B)Landroid/bluetooth/le/AdvertiseData$Builder;",
-        &[JValue::Object(&service_uuid), JValue::Object(&bytes)],
+        &[JValue::Object(service_uuid), JValue::Object(&bytes)]
     )?;
-    let obj = call_method_value(
+    call_object(
         env,
         &builder,
         "build",
         "()Landroid/bluetooth/le/AdvertiseData;",
-        &[],
-    )?
-    .l()?;
-    env.new_global_ref(obj)
+        &[]
+    )
 }
 
-fn build_scan_settings(env: &mut Env<'_>) -> jni::errors::Result<GlobalObject> {
+fn build_scan_settings<'local>(env: &mut Env<'local>) -> jni::errors::Result<JObject<'local>> {
     let builder = new_object(env, "android/bluetooth/le/ScanSettings$Builder", "()V", &[])?;
     let ret = "android/bluetooth/le/ScanSettings$Builder";
     chain_bool(env, &builder, "setLegacy", ret, false)?;
-    let obj = call_method_value(
+    call_object(
         env,
         &builder,
         "build",
         "()Landroid/bluetooth/le/ScanSettings;",
-        &[],
-    )?
-    .l()?;
-    env.new_global_ref(obj)
+        &[]
+    )
 }
 
-fn build_scan_filter(
-    env: &mut Env<'_>,
-    service_uuid: &JObject<'_>,
-) -> jni::errors::Result<GlobalObject> {
+fn build_scan_filter<'local>(env: &mut Env<'local>, service_uuid: &JObject<'_>) -> jni::errors::Result<JObject<'local>> {
     let builder = new_object(env, "android/bluetooth/le/ScanFilter$Builder", "()V", &[])?;
     let null = JObject::null();
     call_method_value(
@@ -580,17 +579,15 @@ fn build_scan_filter(
         &builder,
         "setServiceData",
         "(Landroid/os/ParcelUuid;[B)Landroid/bluetooth/le/ScanFilter$Builder;",
-        &[JValue::Object(service_uuid), JValue::Object(&null)],
+        &[JValue::Object(service_uuid), JValue::Object(&null)]
     )?;
-    let obj = call_method_value(
+    call_object(
         env,
         &builder,
         "build",
         "()Landroid/bluetooth/le/ScanFilter;",
-        &[],
-    )?
-    .l()?;
-    env.new_global_ref(obj)
+        &[]
+    )
 }
 
 fn build_parcel_uuid(env: &mut Env<'_>) -> jni::errors::Result<GlobalObject> {
@@ -601,42 +598,36 @@ fn build_parcel_uuid(env: &mut Env<'_>) -> jni::errors::Result<GlobalObject> {
         "java/util/UUID",
         "fromString",
         "(Ljava/lang/String;)Ljava/util/UUID;",
-        &[JValue::Object(&uuid_string)],
+        &[JValue::Object(&uuid_string)]
     )?
     .l()?;
     let parcel = new_object(
         env,
         "android/os/ParcelUuid",
         "(Ljava/util/UUID;)V",
-        &[JValue::Object(&uuid)],
+        &[JValue::Object(&uuid)]
     )?;
     env.new_global_ref(parcel)
 }
 
-fn bluetooth_adapter(
-    env: &mut Env<'_>,
-    context: &JObject<'_>,
-) -> jni::errors::Result<GlobalObject> {
-    let bluetooth_manager_class =
-        env.find_class(&JNIString::new("android/bluetooth/BluetoothManager"))?;
+fn bluetooth_adapter<'local>(env: &mut Env<'local>, context: &JObject<'_>) -> jni::errors::Result<JObject<'local>> {
+    let bluetooth_manager_class = env.find_class(&JNIString::new("android/bluetooth/BluetoothManager"))?;
     let bluetooth_manager_class = JObject::from(bluetooth_manager_class);
     let manager = call_method_value(
         env,
         context,
         "getSystemService",
         "(Ljava/lang/Class;)Ljava/lang/Object;",
-        &[JValue::Object(&bluetooth_manager_class)],
+        &[JValue::Object(&bluetooth_manager_class)]
     )?
     .l()?;
-    let adapter = call_method_value(
+    call_object(
         env,
         &manager,
         "getAdapter",
         "()Landroid/bluetooth/BluetoothAdapter;",
-        &[],
-    )?
-    .l()?;
-    env.new_global_ref(adapter)
+        &[]
+    )
 }
 
 fn android_vm_and_context() -> Option<(JavaVM, GlobalObject)> {
@@ -661,7 +652,7 @@ fn new_global_object(
     env: &mut Env<'_>,
     class: &str,
     sig: &str,
-    args: &[JValue<'_>],
+    args: &[JValue<'_>]
 ) -> jni::errors::Result<GlobalObject> {
     let obj = new_object(env, class, sig, args)?;
     env.new_global_ref(obj)
@@ -671,7 +662,7 @@ fn new_object<'local>(
     env: &mut Env<'local>,
     class: &str,
     sig: &str,
-    args: &[JValue<'_>],
+    args: &[JValue<'_>]
 ) -> jni::errors::Result<JObject<'local>> {
     let class = JNIString::new(class);
     let sig = RuntimeMethodSignature::from_str(sig)?;
@@ -684,7 +675,7 @@ fn call_object<'local>(
     obj: &JObject<'_>,
     name: &str,
     sig: &str,
-    args: &[JValue<'_>],
+    args: &[JValue<'_>]
 ) -> jni::errors::Result<JObject<'local>> {
     call_method_value(env, obj, name, sig, args)?.l()
 }
@@ -694,7 +685,7 @@ fn call_method_value<'local>(
     obj: &JObject<'_>,
     name: &str,
     sig: &str,
-    args: &[JValue<'_>],
+    args: &[JValue<'_>]
 ) -> jni::errors::Result<JValueOwned<'local>> {
     let name = JNIString::new(name);
     let sig = RuntimeMethodSignature::from_str(sig)?;
@@ -707,7 +698,7 @@ fn call_static_method_value<'local>(
     class: &str,
     name: &str,
     sig: &str,
-    args: &[JValue<'_>],
+    args: &[JValue<'_>]
 ) -> jni::errors::Result<JValueOwned<'local>> {
     let class = JNIString::new(class);
     let name = JNIString::new(name);
@@ -717,9 +708,7 @@ fn call_static_method_value<'local>(
 }
 
 fn call_bool(env: &mut Env<'_>, obj: &JObject<'_>, name: &str) -> bool {
-    call_method_value(env, obj, name, "()Z", &[])
-        .and_then(|v| v.z())
-        .unwrap_or(false)
+    call_method_value(env, obj, name, "()Z", &[]).and_then(|v| v.z()).unwrap_or(false)
 }
 
 fn call_int(env: &mut Env<'_>, obj: &JObject<'_>, name: &str) -> jni::errors::Result<jint> {
@@ -731,20 +720,20 @@ fn chain_bool(
     builder: &JObject<'_>,
     name: &str,
     return_type: &str,
-    value: bool,
+    value: bool
 ) -> jni::errors::Result<()> {
     let sig = format!("(Z)L{return_type};");
     call_method_value(env, builder, name, sig.as_str(), &[JValue::Bool(value)])?;
     Ok(())
 }
 
-#[unsafe(export_name = "Java_dole_ble_RustBleNative_onAdvertisingSetStarted")]
+#[unsafe(export_name = "Java_dole_ble_BleNative_onAdvertisingSetStarted")]
 pub extern "system" fn java_dole_ble_rust_ble_native_on_advertising_set_started<'local>(
     mut unowned_env: EnvUnowned<'local>,
     _this: JObject<'local>,
     advertising_set: JObject<'local>,
     tx_power: jint,
-    status: jint,
+    status: jint
 ) {
     let _ = unowned_env.with_env(|env| {
         if status == 0 && !advertising_set.is_null() {
@@ -762,21 +751,21 @@ pub extern "system" fn java_dole_ble_rust_ble_native_on_advertising_set_started<
     });
 }
 
-#[unsafe(export_name = "Java_dole_ble_RustBleNative_onAdvertisingDataSet")]
+#[unsafe(export_name = "Java_dole_ble_BleNative_onAdvertisingDataSet")]
 pub extern "system" fn java_dole_ble_rust_ble_native_on_advertising_data_set<'local>(
     _env: EnvUnowned<'local>,
     _this: JObject<'local>,
-    status: jint,
+    status: jint
 ) {
     if status != 0 {
         log::warn!(target: LOG_TARGET, "Android BLE advertising data update failed status={}", status);
     }
 }
 
-#[unsafe(export_name = "Java_dole_ble_RustBleNative_onAdvertisingSetStopped")]
+#[unsafe(export_name = "Java_dole_ble_BleNative_onAdvertisingSetStopped")]
 pub extern "system" fn java_dole_ble_rust_ble_native_on_advertising_set_stopped<'local>(
     _env: EnvUnowned<'local>,
-    _this: JObject<'local>,
+    _this: JObject<'local>
 ) {
     if let Ok(mut state) = STATE.lock() {
         state.advertising_set = None;
@@ -784,25 +773,25 @@ pub extern "system" fn java_dole_ble_rust_ble_native_on_advertising_set_stopped<
     log::info!(target: LOG_TARGET, "Android BLE advertising stopped");
 }
 
-#[unsafe(export_name = "Java_dole_ble_RustBleNative_onScanFailed")]
+#[unsafe(export_name = "Java_dole_ble_BleNative_onScanFailed")]
 pub extern "system" fn java_dole_ble_rust_ble_native_on_scan_failed<'local>(
     _env: EnvUnowned<'local>,
     _this: JObject<'local>,
-    error_code: jint,
+    error_code: jint
 ) {
     log::warn!(target: LOG_TARGET, "Android BLE scan failed errorCode={}", error_code);
 }
 
-#[unsafe(export_name = "Java_dole_ble_RustBleNative_onScanResult")]
+#[unsafe(export_name = "Java_dole_ble_BleNative_onScanResult")]
 pub extern "system" fn java_dole_ble_rust_ble_native_on_scan_result<'local>(
     mut unowned_env: EnvUnowned<'local>,
     _this: JObject<'local>,
-    result: JObject<'local>,
+    result: JObject<'local>
 ) {
     let _ = unowned_env.with_env(|env| {
         let payload = match payload_from_scan_result(env, &result) {
             Some(payload) => payload,
-            None => return Ok::<(), jni::errors::Error>(()),
+            None => return Ok::<(), jni::errors::Error>(())
         };
 
         let storage_path = {
@@ -811,8 +800,8 @@ pub extern "system" fn java_dole_ble_rust_ble_native_on_scan_result<'local>(
             };
             state.storage_path.clone()
         };
-        if super::device_id_from_payload_or_service_data(&payload)
-            == Some(crate::network::device::get_session_device_id())
+        if super::session_id_from_payload_or_service_data(&payload)
+            == Some(crate::network::session::get_session_id())
         {
             return Ok(());
         }
@@ -839,7 +828,7 @@ fn payload_from_scan_result(env: &mut Env<'_>, result: &JObject<'_>) -> Option<V
         result,
         "getScanRecord",
         "()Landroid/bluetooth/le/ScanRecord;",
-        &[],
+        &[]
     )
     .ok()?
     .l()
@@ -852,7 +841,7 @@ fn payload_from_scan_result(env: &mut Env<'_>, result: &JObject<'_>) -> Option<V
         &scan_record,
         "getServiceData",
         "(Landroid/os/ParcelUuid;)[B",
-        &[JValue::Object(&service_uuid)],
+        &[JValue::Object(&service_uuid)]
     )
     .ok()?
     .l()

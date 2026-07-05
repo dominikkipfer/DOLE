@@ -6,10 +6,8 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import dole.Constants
 import dole.card.SmartCard
 import dole.core.CoreWrapper
-import dole.core.UIStateListener
 import dole.data.AccountRepository
 import dole.data.AccountStorage
 import dole.data.models.BurnTransaction
@@ -19,6 +17,7 @@ import dole.data.models.SendTransaction
 import dole.data.models.StoredAccount
 import dole.data.models.Transaction
 import dole.utils.ProtocolSerializer
+import dole.utils.ScreenCaptureProtection
 import dole.wallet.WalletService
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.Json
@@ -30,6 +29,8 @@ class WalletViewModel(
     private val card: SmartCard,
     private val storagePath: String
 ) {
+    private fun Throwable.typeName(): String = this::class.simpleName ?: "Throwable"
+
     private val viewModelScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var walletService: WalletService? = null
     private var sessionPin: String? = null
@@ -139,92 +140,89 @@ class WalletViewModel(
 
     private var cardPollingJob: Job? = null
 
-    private val rustListener = object : UIStateListener {
-        override fun onStateUpdated(balance: Long, historyJson: String) {
-            viewModelScope.launch {
-                this@WalletViewModel.balance = balance
-                try {
-                    val dtoList = Json.decodeFromString<List<RustTxDto>>(historyJson)
-                    val txList = mutableListOf<Transaction>()
-                    val displayList = mutableListOf<DisplayTransaction>()
+    private val rustListener: (Long, String) -> Unit = { balance, historyJson ->
+        viewModelScope.launch {
+            this@WalletViewModel.balance = balance
+            try {
+                val dtoList = Json.decodeFromString<List<RustTxDto>>(historyJson)
+                val txList = mutableListOf<Transaction>()
+                val displayList = mutableListOf<DisplayTransaction>()
 
-                    for (dto in dtoList) {
-                        val tx: Transaction? = when (dto.type) {
-                            "MINT" -> MintTransaction(
-                                id = dto.id,
-                                author = dto.author,
-                                timestamp = dto.timestamp,
-                                seq = dto.seq,
-                                signature = dto.signature,
-                                goc = dto.goc
-                            )
-                            "BURN" -> BurnTransaction(
-                                id = dto.id,
-                                author = dto.author,
-                                timestamp = dto.timestamp,
-                                seq = dto.seq,
-                                signature = dto.signature,
-                                goc = dto.goc
-                            )
-                            "SEND" -> SendTransaction(
-                                id = dto.id,
-                                author = dto.author,
-                                timestamp = dto.timestamp,
-                                seq = dto.seq,
-                                signature = dto.signature,
-                                target = dto.target,
-                                goc = dto.goc
-                            )
-                            "GENESIS" -> GenesisTransaction(
-                                id = dto.id,
-                                author = dto.author,
-                                timestamp = dto.timestamp,
-                                seq = dto.seq,
-                                signature = dto.signature,
-                                publicKey = dto.publicKey ?: dto.author,
-                                attachmentCertificate = dto.certificate?.let { CoreWrapper.hexToBytes(it) }
-                            )
-                            else -> null
-                        }
-
-                        if (tx != null) {
-                            txList.add(tx)
-                            displayList.add(DisplayTransaction(tx, dto.goc, false))
-                        }
+                for (dto in dtoList) {
+                    val tx: Transaction? = when (dto.type) {
+                        "MINT" -> MintTransaction(
+                            id = dto.id,
+                            author = dto.author,
+                            timestamp = dto.timestamp,
+                            seq = dto.seq,
+                            signature = dto.signature,
+                            goc = dto.goc
+                        )
+                        "BURN" -> BurnTransaction(
+                            id = dto.id,
+                            author = dto.author,
+                            timestamp = dto.timestamp,
+                            seq = dto.seq,
+                            signature = dto.signature,
+                            goc = dto.goc
+                        )
+                        "SEND" -> SendTransaction(
+                            id = dto.id,
+                            author = dto.author,
+                            timestamp = dto.timestamp,
+                            seq = dto.seq,
+                            signature = dto.signature,
+                            target = dto.target,
+                            goc = dto.goc
+                        )
+                        "GENESIS" -> GenesisTransaction(
+                            id = dto.id,
+                            author = dto.author,
+                            timestamp = dto.timestamp,
+                            seq = dto.seq,
+                            signature = dto.signature,
+                            publicKey = dto.publicKey ?: dto.author,
+                            attachmentCertificate = dto.certificate?.let { CoreWrapper.hexToBytes(it) }
+                        )
+                        else -> null
                     }
 
-                    if (isFirstSync) {
-                        isFirstSync = false
-                    } else {
-                        val oldIds = _fullHistory.map { it.tx.id }.toSet()
-                        val newIncoming = displayList.filter { it.tx.id !in oldIds }
-
-                        for (newTx in newIncoming) {
-                            if (sessionTransactions.none { it.tx.id == newTx.tx.id }) {
-                                sessionTransactions.add(0, newTx)
-                            }
-                        }
+                    if (tx != null) {
+                        txList.add(tx)
+                        displayList.add(DisplayTransaction(tx, dto.goc, false))
                     }
-
-                    _fullHistory.clear()
-                    _fullHistory.addAll(displayList)
-
-                    val peerIds = txList.map {
-                        if (it is SendTransaction) { if (it.author == currentId) it.target else it.author } else it.author
-                    }.toSet().filter { it != currentId }
-
-                    knownNetworkPeers = peerIds.map { peerId ->
-                        val name = accountRepo.getAccount(peerId)?.name ?: "User ...${peerId.takeLast(6)}"
-                        PeerOption(peerId, name)
-                    }
-
-                    walletService?.syncIncomingWithCard(txList)
-                } catch (e: Exception) {
-                    println("JSON Parse Error: ${e.message}")
                 }
+
+                if (isFirstSync) {
+                    isFirstSync = false
+                } else {
+                    val oldIds = _fullHistory.map { it.tx.id }.toSet()
+                    val newIncoming = displayList.filter { it.tx.id !in oldIds }
+
+                    for (newTx in newIncoming) {
+                        if (sessionTransactions.none { it.tx.id == newTx.tx.id }) {
+                            sessionTransactions.add(0, newTx)
+                        }
+                    }
+                }
+
+                _fullHistory.clear()
+                _fullHistory.addAll(displayList)
+
+                val peerIds = txList.map {
+                    if (it is SendTransaction) { if (it.author == currentId) it.target else it.author } else it.author
+                }.toSet().filter { it != currentId }
+
+                knownNetworkPeers = peerIds.map { peerId ->
+                    val name = accountRepo.getAccount(peerId)?.name ?: "User ...${peerId.takeLast(6)}"
+                    PeerOption(peerId, name)
+                }
+
+                walletService?.syncIncomingWithCard(txList)
+            } catch (e: Exception) {
+                println("JSON Parse Error: ${e.message}")
             }
         }
-
     }
 
     init {
@@ -259,6 +257,8 @@ class WalletViewModel(
                         isMinter = accountRepo.isMinter(acc.id)
                         errorMessage = null
                         currentScreen = AppScreenState.DASHBOARD
+                        
+                        ScreenCaptureProtection.setBlocked(storage.isScreenCaptureBlocked(acc.id))
 
                         if (isCardConnected && currentDetectedCardId == acc.id) {
                             walletService = WalletService(card, pin, storage)
@@ -280,6 +280,7 @@ class WalletViewModel(
         walletService?.close()
         walletService = null
         CoreWrapper.shutdown()
+        ScreenCaptureProtection.setBlocked(false)
         currentId = null
         sessionPin = null
         currentScreen = AppScreenState.HOME
@@ -367,23 +368,7 @@ class WalletViewModel(
                 }
                 if (!card.verifyPin(pinB)) throw Exception("Failed to verify newly set PIN")
 
-                val pubKey = card.publicKey ?: throw Exception("Missing Public Key")
-                val cert = card.certificate ?: throw Exception("Missing Certificate.")
-
-                if (!CoreWrapper.verifyCardCertificate(pubKey, cert)) {
-                    throw Exception("Security Alert: Invalid Card Certificate!")
-                }
-
-                val idHex = CoreWrapper.getPersonIdAsHex(pubKey)
-                val fullPubKeyHex = CoreWrapper.bytesToHex(pubKey)
-                accountRepo.createAccount(idHex, name, pin)
-
-                val isCardMinter = try { card.isMinter } catch(_: Exception) { false }
-                accountRepo.setMinterStatus(idHex, isCardMinter)
-
-                withContext(Dispatchers.Main) {
-                    CoreWrapper.initLedger(rustListener, storagePath, idHex, fullPubKeyHex)
-                }
+                val verified = verifyAndStoreCardAccount(name, pin)
 
                 if (!card.isGenesisDone) {
                     try {
@@ -391,7 +376,7 @@ class WalletViewModel(
                         val sigBytes = ProtocolSerializer.parseGenesisSignatureFromResponse(response)
 
                         val sigHex = CoreWrapper.bytesToHex(sigBytes)
-                        val certHex = CoreWrapper.bytesToHex(cert)
+                        val certHex = CoreWrapper.bytesToHex(verified.certificate)
 
                         CoreWrapper.genesis(sigHex, certHex)
                     } catch (e: Exception) {
@@ -399,17 +384,11 @@ class WalletViewModel(
                     }
                 }
 
-                withContext(Dispatchers.Main) {
-                    availableAccounts = accountRepo.getAllAccounts()
-                    isSetupLoading = false
-                    isSetupSuccessful = true
-                    tempSetupAccount = accountRepo.getAccount(idHex)
-                    tempSetupPin = pin
-                }
+                finishCardSetup(verified.idHex, pin)
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     isSetupLoading = false
-                    errorMessage = "Setup Error: ${e.javaClass.simpleName} - ${e.message}"
+                    errorMessage = "Setup Error: ${e.typeName()} - ${e.message}"
                 }
             }
         }
@@ -429,38 +408,47 @@ class WalletViewModel(
                     throw Exception(if (left == 0) "Card is bricked!" else "Wrong PIN. $left attempts remaining.")
                 }
 
-                val pubKey = card.publicKey ?: throw Exception("Missing Public Key")
-                val cert = card.certificate ?: throw Exception("Missing Certificate.")
-
-                if (!CoreWrapper.verifyCardCertificate(pubKey, cert)) {
-                    throw Exception("Security Alert: Invalid Card Certificate!")
-                }
-
-                val idHex = CoreWrapper.getPersonIdAsHex(pubKey)
-                val fullPubKeyHex = CoreWrapper.bytesToHex(pubKey)
-
-                accountRepo.createAccount(idHex, name, pin)
-
-                val isCardMinter = try { card.isMinter } catch(_: Exception) { false }
-                accountRepo.setMinterStatus(idHex, isCardMinter)
-
-                withContext(Dispatchers.Main) {
-                    CoreWrapper.initLedger(rustListener, storagePath, idHex, fullPubKeyHex)
-
-                    availableAccounts = accountRepo.getAllAccounts()
-                    isSetupLoading = false
-                    isSetupSuccessful = true
-                    tempSetupAccount = accountRepo.getAccount(idHex)
-                    tempSetupPin = pin
-                }
+                val verified = verifyAndStoreCardAccount(name, pin)
+                finishCardSetup(verified.idHex, pin)
 
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     isSetupLoading = false
-                    errorMessage = "Setup Error: ${e.javaClass.simpleName} - ${e.message}"
+                    errorMessage = "Setup Error: ${e.typeName()} - ${e.message}"
                 }
             }
         }
+    }
+
+    private class VerifiedCard(val idHex: String, val certificate: ByteArray)
+
+    private suspend fun verifyAndStoreCardAccount(name: String, pin: String): VerifiedCard {
+        val pubKey = card.publicKey ?: throw Exception("Missing Public Key")
+        val cert = card.certificate ?: throw Exception("Missing Certificate.")
+
+        if (!CoreWrapper.verifyCardCertificate(pubKey, cert)) {
+            throw Exception("Security Alert: Invalid Card Certificate!")
+        }
+
+        val idHex = CoreWrapper.getPersonIdAsHex(pubKey)
+        val fullPubKeyHex = CoreWrapper.bytesToHex(pubKey)
+        accountRepo.createAccount(idHex, name, pin)
+
+        val isCardMinter = try { card.isMinter } catch(_: Exception) { false }
+        accountRepo.setMinterStatus(idHex, isCardMinter)
+
+        withContext(Dispatchers.Main) {
+            CoreWrapper.initLedger(rustListener, storagePath, idHex, fullPubKeyHex)
+        }
+        return VerifiedCard(idHex, cert)
+    }
+
+    private suspend fun finishCardSetup(idHex: String, pin: String) = withContext(Dispatchers.Main) {
+        availableAccounts = accountRepo.getAllAccounts()
+        isSetupLoading = false
+        isSetupSuccessful = true
+        tempSetupAccount = accountRepo.getAccount(idHex)
+        tempSetupPin = pin
     }
 
     fun completeSetup(wantsBiometrics: Boolean = false) {
@@ -480,6 +468,33 @@ class WalletViewModel(
     }
 
     fun goToSettings() { currentScreen = AppScreenState.SETTINGS }
+    
+    private var relockAccount: StoredAccount? = null
+
+    fun onAppBackground() {
+        if (currentId != null &&
+            (currentScreen == AppScreenState.DASHBOARD || currentScreen == AppScreenState.SETTINGS)
+        ) {
+            relockAccount = availableAccounts.find { it.id == currentId }
+            logout()
+        }
+    }
+
+    fun onAppForeground() {
+        relockAccount?.let { selectAccountToLogin(it) }
+        relockAccount = null
+    }
+
+    fun isScreenCaptureBlocked(): Boolean {
+        val id = currentId ?: return false
+        return storage.isScreenCaptureBlocked(id)
+    }
+
+    fun setScreenCaptureBlocked(blocked: Boolean) {
+        val id = currentId ?: return
+        storage.setScreenCaptureBlocked(id, blocked)
+        ScreenCaptureProtection.setBlocked(blocked)
+    }
 
     fun isBiometricsEnabled(accountId: String) = storage.isBiometricsEnabled(accountId)
 

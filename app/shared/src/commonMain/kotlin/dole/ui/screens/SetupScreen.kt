@@ -25,13 +25,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -52,9 +49,12 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import dole.data.models.StoredAccount
+import dole.ui.components.AppBackHandler
+import dole.ui.components.AppButton
+import dole.ui.components.AppSwitchButton
+import dole.ui.components.AppTextButton
 import dole.ui.components.NameInputSection
 import dole.ui.components.PinOverlay
 import dole.ui.components.ResizableNumPad
@@ -174,6 +174,8 @@ fun SetupScreen(
         if (pinInput.isNotEmpty() && !isLocalError && !isError && !isRecoveringFromError) pinInput = pinInput.dropLast(1)
     }
 
+    AppBackHandler { if (isLoading) onCancel() else goBack() }
+
     LaunchedEffect(step) { if (step >= 2) mainFocusRequester.requestFocus() }
 
     with(sharedTransitionScope) {
@@ -187,31 +189,21 @@ fun SetupScreen(
                     boundsTransform = { _, _ -> tween(500) }
                 )
                 .onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyUp) {
-                        when (event.key) {
-                            Key.Escape -> {
-                                if (isLoading) onCancel() else goBack()
-                                true
-                            }
-                            Key.Enter -> {
-                                if (isSuccess) {
-                                    onComplete(wantsBiometrics)
-                                    true
-                                } else if (step == 1 && name.isNotBlank()) {
-                                    handleNameSubmit()
-                                    true
-                                } else false
-                            }
-                            else -> false
-                        }
+                    if (event.type == KeyEventType.KeyUp && event.key == Key.Enter) {
+                        if (isSuccess) {
+                            onComplete(wantsBiometrics)
+                            true
+                        } else if (step == 1 && name.isNotBlank()) {
+                            handleNameSubmit()
+                            true
+                        } else false
                     } else false
                 }
                 .pinInputHandler(
                     focusRequester = mainFocusRequester,
                     enabled = step >= 2 && !isLoading && !isRecoveringFromError,
                     onDigit = { handlePinInput(it) },
-                    onDelete = { removeDigit() },
-                    onEscape = { goBack() }
+                    onDelete = { removeDigit() }
                 )
         ) {
             AnimatedContent(
@@ -296,7 +288,7 @@ fun SetupScreen(
                                         var wantsBiometrics by remember { mutableStateOf(secureStorage.isBiometricSupported) }
 
                                         if (secureStorage.isBiometricSupported) {
-                                            dole.ui.components.AppSwitchButton(
+                                            AppSwitchButton(
                                                 title = "Use Biometrics",
                                                 checked = wantsBiometrics,
                                                 onCheckedChange = { wantsBiometrics = it }
@@ -304,13 +296,11 @@ fun SetupScreen(
                                             Spacer(Modifier.height(32.dp))
                                         }
 
-                                        Button(
+                                        AppButton(
+                                            text = "Open Dashboard",
                                             onClick = { onComplete(wantsBiometrics) },
-                                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                                             modifier = Modifier.height(50.dp).width(200.dp)
-                                        ) {
-                                            Text("Open Dashboard", fontWeight = FontWeight.Bold)
-                                        }
+                                        )
                                     }
                                     else -> ResizableNumPad(
                                         buttonSize = metrics.buttonSize,
@@ -325,9 +315,12 @@ fun SetupScreen(
                     bottomContent = {
                         val buttonText = if (isLoading) "Cancel" else if (isSuccess) "Close" else "Cancel"
                         val buttonAction = if (isLoading) onCancel else { { goBack() } }
-                        TextButton(onClick = buttonAction, modifier = Modifier.height(48.dp)) {
-                            Text(buttonText, color = if (isLoading) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-                        }
+                        AppTextButton(
+                            text = buttonText,
+                            onClick = buttonAction,
+                            modifier = Modifier.height(48.dp),
+                            textColor = if (isLoading) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.error
+                        )
                     }
                 )
             }
@@ -344,9 +337,7 @@ fun SetupScreen(
                             Text("Please hold card to your device", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
                         }
                         Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(100.dp).padding(bottom = 32.dp), contentAlignment = Alignment.Center) {
-                            TextButton(onClick = onCancel, modifier = Modifier.height(48.dp)) {
-                                Text("Cancel", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-                            }
+                            AppTextButton(text = "Cancel", onClick = onCancel, modifier = Modifier.height(48.dp))
                         }
                     }
                 }

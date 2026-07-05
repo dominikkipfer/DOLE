@@ -1,4 +1,3 @@
-@file:Suppress("EXPECT_ACTUAL_CLASSIFIERS_ARE_IN_BETA_WARNING")
 package dole.core
 
 actual object CoreWrapper {
@@ -12,10 +11,10 @@ actual object CoreWrapper {
         dole.core.stopGlobalSync()
     }
 
-    actual fun initLedger(listener: UIStateListener, storagePath: String, publicKeyId: String, publicKeyFull: String) {
+    actual fun initLedger(onStateUpdated: (Long, String) -> Unit, storagePath: String, publicKeyId: String, publicKeyFull: String) {
         val rustListener = object : LedgerStateListener {
             override fun onStateUpdated(balance: Long, transactionHistoryJson: String) {
-                listener.onStateUpdated(balance, transactionHistoryJson)
+                onStateUpdated(balance, transactionHistoryJson)
             }
         }
         ledger = Ledger.initLedger(rustListener, storagePath, publicKeyId, publicKeyFull)

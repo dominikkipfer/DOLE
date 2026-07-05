@@ -1,17 +1,18 @@
-//
-//  iosAppApp.swift
-//  iosApp
-//
-//  Created by Dominik Kipfer on 18.04.2026.
-//
-
 import SwiftUI
 
 @main
 struct iosAppApp: App {
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ZStack {
+                ContentView()
+                if scenePhase != .active {
+                    Rectangle().fill(.regularMaterial).ignoresSafeArea().transition(.opacity)
+                }
+            }
+            .animation(.easeInOut(duration: 0.15), value: scenePhase)
         }
     }
 }

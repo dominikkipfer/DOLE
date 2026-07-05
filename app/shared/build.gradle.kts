@@ -2,9 +2,10 @@
 
 import com.mikepenz.aboutlibraries.plugin.DuplicateMode
 import com.mikepenz.aboutlibraries.plugin.DuplicateRule
+import org.gradle.api.GradleException
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
-import org.jetbrains.kotlin.konan.target.HostManager
 import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
+import org.jetbrains.kotlin.konan.target.HostManager
 
 plugins {
     alias(libs.plugins.about.libraries)
@@ -18,11 +19,73 @@ plugins {
 
 val jdkVersion = libs.versions.java.get().toInt()
 val coreDir = file("${project.rootDir}/core")
-val uniffiGenDir = file("${layout.buildDirectory.get()}/generated/uniffi/kotlin")
-val uniffiSwiftGenDir = file("${layout.buildDirectory.get()}/generated/uniffi/swift")
+val generatedConstantsKotlinDir = layout.buildDirectory.dir("generated/source/constants/kotlin")
+val uniffiGenDir = layout.buildDirectory.dir("generated/uniffi/kotlin")
+val uniffiSwiftGenDir = layout.buildDirectory.dir("generated/uniffi/swift")
+val generateConstantsTask = rootProject.tasks.named("generateConstants")
+
+fun Exec.cargoCommand(vararg cargoArgs: String) {
+    if (HostManager.hostIsMac) {
+        val cargoHome = System.getenv("CARGO_HOME")
+            ?: "${System.getProperty("user.home")}/.cargo"
+
+        val cargoExecutable = file("$cargoHome/bin/cargo")
+
+        executable = cargoExecutable.absolutePath
+        args(*cargoArgs)
+        environment("PATH", "${cargoExecutable.parentFile.absolutePath}:${System.getenv("PATH").orEmpty()}")
+
+        doFirst {
+            if (!cargoExecutable.exists()) {
+                throw GradleException("cargo not found at ${cargoExecutable.absolutePath}")
+            }
+        }
+    } else {
+        commandLine("cargo", *cargoArgs)
+    }
+}
+
+val buildHostRust = tasks.register<Exec>("buildHostRust") {
+    dependsOn(generateConstantsTask)
+    workingDir = coreDir
+    cargoCommand("build", "--release")
+}
+
+val generateUniffiBindings = tasks.register<Exec>("generateUniffiBindings") {
+    dependsOn(buildHostRust)
+    workingDir = coreDir
+
+    val libName = System.mapLibraryName("core")
+    val libPath = "target/release/$libName"
+
+    cargoCommand(
+        "run", "--bin", "uniffi-bindgen",
+        "--",
+        "generate", "--library", libPath, "--language", "kotlin", "--out-dir",
+        uniffiGenDir.get().asFile.absolutePath, "--no-format"
+    )
+
+    doLast {
+        val generatedFile = uniffiGenDir.get().asFile.resolve("dole/core/core.kt")
+        if (!generatedFile.exists()) {
+            return@doLast
+        }
+
+        val source = generatedFile.readText()
+        val unsuppressed = "public fun uniffiEnsureInitialized() {\n"
+        val suppressed = "@Suppress(\"UNUSED_EXPRESSION\")\n$unsuppressed"
+        if (!source.contains(suppressed)) {
+            generatedFile.writeText(source.replace(unsuppressed, suppressed))
+        }
+    }
+}
 
 kotlin {
     jvmToolchain(jdkVersion)
+
+    compilerOptions {
+        freeCompilerArgs.add("-Xexpect-actual-classes")
+    }
 
     android {
         namespace = "dole.app.shared"
@@ -48,7 +111,7 @@ kotlin {
 
     sourceSets {
         commonMain {
-            kotlin.srcDir(layout.buildDirectory.dir("generated/source/constants/kotlin"))
+            kotlin.srcDir(files(generatedConstantsKotlinDir).builtBy(generateConstantsTask))
             dependencies {
                 implementation(libs.compose.runtime)
                 implementation(libs.compose.foundation)
@@ -56,6 +119,7 @@ kotlin {
                 implementation(libs.compose.material3)
                 implementation(libs.compose.ui)
                 implementation(libs.compose.animation)
+                implementation(libs.navigationevent.compose)
                 implementation(libs.compose.components.resources)
                 implementation(libs.multiplatform.settings)
                 implementation(libs.kotlinx.serialization.json)
@@ -63,7 +127,7 @@ kotlin {
         }
 
         androidMain {
-            kotlin.srcDir(uniffiGenDir)
+            kotlin.srcDir(files(uniffiGenDir).builtBy(generateUniffiBindings))
             dependencies {
                 implementation(libs.androidx.activity.compose)
                 implementation(libs.androidx.core.ktx)
@@ -74,19 +138,13 @@ kotlin {
         }
 
         jvmMain {
-            kotlin.srcDir(uniffiGenDir)
+            kotlin.srcDir(files(uniffiGenDir).builtBy(generateUniffiBindings))
             dependencies {
                 implementation(libs.kotlinx.coroutines.swing)
                 implementation(libs.jna)
             }
         }
     }
-}
-
-val buildHostRust = tasks.register<Exec>("buildHostRust") {
-    dependsOn(rootProject.tasks.named("generateConstants"))
-    workingDir = coreDir
-    commandLine("cargo", "build", "--release")
 }
 
 val syncJvmRustBinaries = tasks.register<Copy>("syncJvmRustBinaries") {
@@ -97,35 +155,10 @@ val syncJvmRustBinaries = tasks.register<Copy>("syncJvmRustBinaries") {
     into(layout.projectDirectory.dir("src/jvmMain/resources"))
 }
 
-val generateUniffiBindings = tasks.register<Exec>("generateUniffiBindings") {
-    dependsOn(buildHostRust)
-    workingDir = coreDir
-    val libName = System.mapLibraryName("core")
-    val libPath = "target/release/$libName"
-    commandLine(
-        "cargo", "run", "--bin", "uniffi-bindgen",
-        "--",
-        "generate", "--library", libPath, "--language", "kotlin", "--out-dir", uniffiGenDir.absolutePath, "--no-format"
-    )
-    doLast {
-        val generatedFile = uniffiGenDir.resolve("dole/core/core.kt")
-        if (!generatedFile.exists()) {
-            return@doLast
-        }
-
-        val source = generatedFile.readText()
-        val unsuppressed = "public fun uniffiEnsureInitialized() {\n"
-        val suppressed = "@Suppress(\"UNUSED_EXPRESSION\")\n$unsuppressed"
-        if (!source.contains(suppressed)) {
-            generatedFile.writeText(source.replace(unsuppressed, suppressed))
-        }
-    }
-}
-
 val buildAndroidRust = tasks.register<Exec>("buildAndroidRust") {
-    dependsOn(rootProject.tasks.named("generateConstants"))
+    dependsOn(generateConstantsTask)
     workingDir = coreDir
-    commandLine("cargo", "ndk", "-t", "arm64-v8a", "-o", "${coreDir}/dist/android/jniLibs", "build", "--release")
+    cargoCommand("ndk", "-t", "arm64-v8a", "-o", "${coreDir}/dist/android/jniLibs", "build", "--release")
 }
 
 val syncAndroidRustBinaries = tasks.register<Copy>("syncAndroidRustBinaries") {
@@ -135,32 +168,24 @@ val syncAndroidRustBinaries = tasks.register<Copy>("syncAndroidRustBinaries") {
 }
 
 val buildIosRust = tasks.register<Exec>("buildIosRust") {
-    dependsOn(rootProject.tasks.named("generateConstants"))
+    dependsOn(generateConstantsTask)
     workingDir = coreDir
-    commandLine("cargo", "build", "--target", "aarch64-apple-ios", "--release")
+    cargoCommand("build", "--target", "aarch64-apple-ios", "--release")
 }
 
 val generateUniffiSwiftBindings = tasks.register<Exec>("generateUniffiSwiftBindings") {
     dependsOn(buildIosRust)
     workingDir = coreDir
-    commandLine(
-        "cargo", "run", "--bin", "uniffi-bindgen",
+    cargoCommand(
+        "run", "--bin", "uniffi-bindgen",
         "--",
-        "generate", "--library", "target/aarch64-apple-ios/release/libcore.a",
-        "--language", "swift", "--out-dir", uniffiSwiftGenDir.absolutePath, "--no-format"
+        "generate", "--library", "target/aarch64-apple-ios/release/libcore.a", "--language", "swift", "--out-dir",
+        uniffiSwiftGenDir.get().asFile.absolutePath, "--no-format"
     )
 }
 
 val syncRustBinaries = tasks.register("syncRustBinaries") {
     dependsOn(syncAndroidRustBinaries, syncJvmRustBinaries)
-}
-
-tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-    dependsOn(generateUniffiBindings, rootProject.tasks.named("generateConstants"))
-}
-
-tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinNativeCompile>().configureEach {
-    dependsOn(rootProject.tasks.named("generateConstants"))
 }
 
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }.configureEach {

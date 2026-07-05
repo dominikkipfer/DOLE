@@ -92,7 +92,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
@@ -111,6 +118,7 @@ import dole.data.models.GenesisTransaction
 import dole.data.models.MintTransaction
 import dole.data.models.SendTransaction
 import dole.data.models.StoredAccount
+import dole.ui.components.AppBackHandler
 import dole.ui.components.AppButton
 import dole.ui.components.WalletCard
 import dole.ui.components.AppTextField
@@ -139,6 +147,16 @@ fun DashboardScreen(
 	var showSendDialog by remember { mutableStateOf(false) }
 	var showMintDialog by remember { mutableStateOf(false) }
 	var showBurnDialog by remember { mutableStateOf(false) }
+
+	fun handleBack() {
+		when {
+			showSendDialog -> showSendDialog = false
+			showMintDialog -> showMintDialog = false
+			showBurnDialog -> showBurnDialog = false
+			else -> viewModel.logout()
+		}
+	}
+	AppBackHandler { handleBack() }
 
 	val clipboard = rememberAppClipboard()
 
@@ -801,6 +819,9 @@ fun CleanAmountInput(
 				textAlign = TextAlign.Start
 			)
 
+			val amountFocusRequester = remember { FocusRequester() }
+			LaunchedEffect(Unit) { amountFocusRequester.requestFocus() }
+
 			BasicTextField(
 				value = value,
 				onValueChange = { input ->
@@ -823,6 +844,7 @@ fun CleanAmountInput(
 				cursorBrush = SolidColor(MaterialTheme.colorScheme.onSurface),
 				singleLine = true,
 				modifier = Modifier
+					.focusRequester(amountFocusRequester)
 					.width(IntrinsicSize.Min)
 					.defaultMinSize(minWidth = 40.dp),
 				decorationBox = { innerTextField ->
@@ -944,8 +966,24 @@ fun ModernActionSheet(
 	isConfirmEnabled: Boolean,
 	content: @Composable ColumnScope.() -> Unit
 ) {
+	AppBackHandler { onDismissRequest() }
+
 	SafeOverlay(onDismissRequest = onDismissRequest) {
-		Column(modifier = Modifier.fillMaxWidth().padding(24.dp)) {
+		Column(
+			modifier = Modifier
+				.fillMaxWidth()
+				.padding(24.dp)
+				.onPreviewKeyEvent { event ->
+					if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
+					when (event.key) {
+						Key.Enter, Key.NumPadEnter -> {
+							if (isConfirmEnabled) onConfirm()
+							true
+						}
+						else -> false
+					}
+				}
+		) {
 			Box(modifier = Modifier.fillMaxWidth()) {
 				Text(
 					text = title,

@@ -1,7 +1,11 @@
 package dole
 
 import android.Manifest
+import android.bluetooth.BluetoothAdapter
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.nfc.NfcAdapter
@@ -11,13 +15,13 @@ import android.os.Bundle
 import android.util.Log
 import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.runtime.remember
 import com.russhwolf.settings.SharedPreferencesSettings
 import dole.card.AndroidSmartCard
 import dole.core.CoreWrapper
-import dole.data.AccountRepositoryImpl
+import dole.data.AccountRepository
 import dole.data.AccountStorage
 import dole.utils.AndroidSecureStorage
+import dole.utils.ScreenCaptureProtection
 import dole.viewmodel.WalletApp
 import dole.viewmodel.WalletViewModel
 
@@ -28,7 +32,23 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
     private var syncStarted = false
     private var bleStarted = false
     private lateinit var storagePath: String
+    private lateinit var viewModel: WalletViewModel
     private val smartCard = AndroidSmartCard(null)
+
+    private val bluetoothStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
+                BluetoothAdapter.STATE_TURNING_OFF, BluetoothAdapter.STATE_OFF -> {
+                    Log.i("DOLE", "Bluetooth off; stopping BLE transport")
+                    stopBleBroadcast()
+                }
+                BluetoothAdapter.STATE_ON -> if (syncStarted) {
+                    Log.i("DOLE", "Bluetooth back on; restarting BLE transport")
+                    startBleBroadcast()
+                }
+            }
+        }
+    }
 
     private external fun initNdkContext(context: Context)
 
@@ -53,21 +73,30 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
         val prefs = getSharedPreferences("dole_settings", MODE_PRIVATE)
         val settings = SharedPreferencesSettings(prefs)
         val accountStorage = AccountStorage(settings)
+        val secureStorage = AndroidSecureStorage(this)
+        val accountRepo = AccountRepository(secureStorage, accountStorage)
+        viewModel = WalletViewModel(accountRepo, accountStorage, smartCard, storagePath)
+
+        ScreenCaptureProtection.bind(this)
+        if (Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false)
 
         setContent {
-            val secureStorage = remember { AndroidSecureStorage(this@MainActivity) }
-            val accountRepo = remember { AccountRepositoryImpl(secureStorage, accountStorage) }
-
-            val viewModel = remember {
-                WalletViewModel(accountRepo, accountStorage, smartCard, storagePath)
-            }
-
             WalletApp(viewModel)
         }
 
-        if (checkPermissions()) {
-            startNetworkServices()
-        }
+        registerReceiver(bluetoothStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
+
+        if (checkPermissions()) startNetworkServices()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (::viewModel.isInitialized) viewModel.onAppForeground()
+    }
+
+    override fun onStop() {
+        if (::viewModel.isInitialized) viewModel.onAppBackground()
+        super.onStop()
     }
 
     override fun onResume() {
@@ -90,6 +119,9 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
     }
 
     override fun onDestroy() {
+        try {
+            unregisterReceiver(bluetoothStateReceiver)
+        } catch (_: IllegalArgumentException) { }
         stopBleBroadcast()
         if (syncStarted) {
             CoreWrapper.stopGlobalSync()
@@ -106,9 +138,7 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
 
-        if (requestCode != NETWORK_PERMISSION_REQUEST) {
-            return
-        }
+        if (requestCode != NETWORK_PERMISSION_REQUEST) return
 
         val granted = grantResults.isNotEmpty() &&
             grantResults.all { it == PackageManager.PERMISSION_GRANTED }
@@ -127,9 +157,7 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
     }
 
     private fun startNetworkSync() {
-        if (syncStarted) {
-            return
-        }
+        if (syncStarted) return
 
         acquireMulticastLock()
         CoreWrapper.startGlobalSync(storagePath)

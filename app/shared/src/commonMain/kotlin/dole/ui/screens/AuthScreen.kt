@@ -19,8 +19,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -30,11 +28,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
-import androidx.compose.ui.unit.sp
 import dole.data.models.StoredAccount
+import dole.ui.components.AppBackHandler
+import dole.ui.components.AppTextButton
 import dole.ui.components.ResizableNumPad
 import dole.ui.components.WalletCard
 import dole.ui.components.PinOverlay
@@ -61,6 +59,8 @@ fun AuthScreen(
     var pin by remember { mutableStateOf("") }
     val focusRequester = remember { FocusRequester() }
     val shakeOffset = remember { Animatable(0f) }
+
+    AppBackHandler { onCancel() }
 
     val secureStorage = rememberSecureStorage()
     var showNumPad by remember { mutableStateOf(!isBiometricsEnabled || !secureStorage.isBiometricSupported) }
@@ -107,8 +107,7 @@ fun AuthScreen(
             focusRequester = focusRequester,
             enabled = !isError && showNumPad,
             onDigit = { addDigit(it) },
-            onDelete = { removeDigit() },
-            onEscape = onCancel
+            onDelete = { removeDigit() }
         ),
         cardContent = {
             with(sharedTransitionScope) {
@@ -176,9 +175,7 @@ fun AuthScreen(
             }
         },
         bottomContent = {
-            TextButton(onClick = onCancel, modifier = Modifier.height(48.dp)) {
-                Text("Cancel", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-            }
+            AppTextButton(text = "Cancel", onClick = onCancel, modifier = Modifier.height(48.dp))
         }
     )
 }

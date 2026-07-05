@@ -11,15 +11,15 @@ name = "uniffi-bindgen"
 path = "uniffi-bindgen.rs"
 
 [dependencies]
-uniffi = { version = "0.31.2", features = ["cli"] }
+uniffi = { version = "0.32.0", features = ["cli"] }
 gix = { version = "0.85.0", features = ["max-performance"] }
 sha2 = "0.11.0"
 hex = "0.4.3"
 modular-bitfield = "0.13.1"
-p256 = { version = "0.14.0-rc.14", features = ["ecdsa"] }
-iroh = "1.0.0"
+p256 = { version = "0.14.0", features = ["ecdsa"] }
+iroh = "1.0.1"
 iroh-gossip = "0.101.0"
-swarm-discovery = "0.6.2"
+swarm-discovery = "0.6.3"
 data-encoding = "2.11.0"
 getrandom = "0.4.3"
 tokio = { version = "1.52.3", features = ["full"] }
@@ -36,3 +36,8 @@ ndk-context = "0.1.1"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = ["Devices_Bluetooth", "Devices_Bluetooth_Advertisement", "Foundation", "Storage_Streams", "Win32_System_WinRT"] }
+
+[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
+objc2 = "0.6.4"
+objc2-core-bluetooth = "0.3.2"
+objc2-foundation = "0.3.2"

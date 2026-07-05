@@ -1,5 +1,6 @@
 package dole
 
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.window.Window
@@ -7,9 +8,10 @@ import androidx.compose.ui.window.application
 import com.russhwolf.settings.PreferencesSettings
 import dole.card.PCSmartCard
 import dole.core.CoreWrapper
-import dole.data.AccountRepositoryImpl
+import dole.data.AccountRepository
 import dole.data.AccountStorage
 import dole.utils.DesktopSecureStorage
+import dole.utils.ScreenCaptureProtection
 import dole.viewmodel.WalletApp
 import dole.viewmodel.WalletViewModel
 import org.jetbrains.compose.resources.decodeToSvgPainter
@@ -44,11 +46,11 @@ fun main() = application {
         title = "DOLE",
         icon = icon
     ) {
+        LaunchedEffect(Unit) { ScreenCaptureProtection.bind(window) }
+
         val secureStorage = remember { DesktopSecureStorage() }
 
-        val accountRepo = remember {
-            AccountRepositoryImpl(secureStorage, accountStorage)
-        }
+        val accountRepo = remember { AccountRepository(secureStorage, accountStorage) }
 
         val card = remember {
             PCSmartCard()

@@ -1,5 +1,6 @@
 package dole.ui.modifiers
 
+import androidx.compose.foundation.focusable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -13,8 +14,7 @@ fun Modifier.pinInputHandler(
     focusRequester: FocusRequester,
     enabled: Boolean,
     onDigit: (String) -> Unit,
-    onDelete: () -> Unit,
-    onEscape: () -> Unit
+    onDelete: () -> Unit
 ): Modifier = this
     .focusRequester(focusRequester)
     .onPreviewKeyEvent { event ->
@@ -31,7 +31,6 @@ fun Modifier.pinInputHandler(
                 Key.Eight, Key.NumPad8 -> onDigit("8")
                 Key.Nine, Key.NumPad9 -> onDigit("9")
                 Key.Backspace -> onDelete()
-                Key.Escape -> onEscape()
                 else -> return@onPreviewKeyEvent false
             }
             true
@@ -39,3 +38,4 @@ fun Modifier.pinInputHandler(
             false
         }
     }
+    .focusable()

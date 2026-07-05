@@ -30,7 +30,7 @@ fun SplitLayout(
         contentAlignment = Alignment.Center
     ) {
         val isWideLayout = maxWidth > maxHeight
-        val topPadding = if (isWideLayout) 16.dp else 40.dp
+        val topPadding = 12.dp
         val cancelButtonHeight = 48.dp
 
         Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {

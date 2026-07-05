@@ -1,10 +1,13 @@
 package dole.utils
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import kotlinx.cinterop.*
 import platform.CoreFoundation.*
 import platform.Foundation.*
 import platform.Security.*
 
+@OptIn(ExperimentalForeignApi::class)
 class IosSecureStorage : SecureStorage {
 
     override val isBiometricSupported: Boolean = true
@@ -38,14 +41,30 @@ class IosSecureStorage : SecureStorage {
         SecItemAdd(query as CFDictionaryRef, null)
     }
 
-    override suspend fun getPinSecurely(accountId: String, promptTitle: String): String? {
+    override suspend fun getPinSecurely(accountId: String): String? {
+        return getPin(accountId, promptTitle = null)
+    }
+
+    override suspend fun getPinWithBiometrics(accountId: String): String? {
+        return getPin(accountId, promptTitle = "Login to Dole Wallet")
+    }
+
+    override suspend fun deletePinSecurely(accountId: String) {
+        val query = mutableMapOf<Any?, Any?>(
+            kSecClass to kSecClassGenericPassword,
+            kSecAttrAccount to accountId
+        )
+        SecItemDelete(query as CFDictionaryRef)
+    }
+
+    private fun getPin(accountId: String, promptTitle: String?): String? {
         val query = mutableMapOf<Any?, Any?>(
             kSecClass to kSecClassGenericPassword,
             kSecAttrAccount to accountId,
             kSecReturnData to kCFBooleanTrue,
-            kSecMatchLimit to kSecMatchLimitOne,
-            kSecUseOperationPrompt to promptTitle
+            kSecMatchLimit to kSecMatchLimitOne
         )
+        if (promptTitle != null) query[kSecUseOperationPrompt] = promptTitle
 
         var result: CFTypeRef? = null
         val status = memScoped {
@@ -63,4 +82,5 @@ class IosSecureStorage : SecureStorage {
     }
 }
 
-actual fun rememberSecureStorage(): SecureStorage = IosSecureStorage()
+@Composable
+actual fun rememberSecureStorage(): SecureStorage = remember { IosSecureStorage() }

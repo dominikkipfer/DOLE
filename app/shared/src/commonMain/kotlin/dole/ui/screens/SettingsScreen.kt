@@ -9,7 +9,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -26,14 +25,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -46,17 +41,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import dole.data.models.StoredAccount
+import dole.ui.components.AppBackHandler
+import dole.ui.components.AppButton
+import dole.ui.components.AppOutlinedButton
+import dole.ui.components.AppSwitchButton
+import dole.ui.components.AppTextButton
 import dole.ui.components.NameInputSection
 import dole.ui.components.PinOverlay
 import dole.ui.components.ResizableNumPad
@@ -66,6 +60,7 @@ import dole.ui.layouts.SplitLayout
 import dole.ui.metrics.rememberCardMetrics
 import dole.ui.metrics.rememberNumPadMetrics
 import dole.ui.modifiers.pinInputHandler
+import dole.utils.ScreenCaptureProtection
 import dole.utils.rememberAppClipboard
 import dole.utils.rememberSecureStorage
 import dole.viewmodel.WalletViewModel
@@ -157,6 +152,12 @@ fun SettingsScreen(
         }
     }
 
+    AppBackHandler {
+        if (!isLoading) {
+            if (step == SettingsStep.MENU) onBack() else if (step != SettingsStep.SUCCESS) resetToMenu()
+        }
+    }
+
     LaunchedEffect(step) {
         if (step != SettingsStep.NAME) focusRequester.requestFocus()
     }
@@ -164,20 +165,11 @@ fun SettingsScreen(
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .onPreviewKeyEvent { event ->
-                if (event.type == KeyEventType.KeyUp && event.key == Key.Escape) {
-                    if (!isLoading) {
-                        if (step == SettingsStep.MENU) onBack() else if (step != SettingsStep.SUCCESS) resetToMenu()
-                    }
-                    true
-                } else false
-            }
             .pinInputHandler(
                 focusRequester = focusRequester,
                 enabled = !isLoading && (step == SettingsStep.PIN_ENTER || step == SettingsStep.PIN_CONFIRM),
                 onDigit = { handleDigit(it) },
-                onDelete = { if (pinInput.isNotEmpty()) pinInput = pinInput.dropLast(1) },
-                onEscape = { }
+                onDelete = { if (pinInput.isNotEmpty()) pinInput = pinInput.dropLast(1) }
             )
     ) {
         SplitLayout(
@@ -287,12 +279,26 @@ fun SettingsScreen(
                                     if (secureStorage.isBiometricSupported) {
                                         var isBioEnabled by remember { mutableStateOf(viewModel.isBiometricsEnabled(viewModel.currentId ?: "")) }
 
-                                        dole.ui.components.AppSwitchButton(
+                                        AppSwitchButton(
                                             title = "Use Biometrics",
                                             checked = isBioEnabled,
                                             onCheckedChange = { isChecked ->
                                                 isBioEnabled = isChecked
                                                 viewModel.setBiometricsEnabled(viewModel.currentId ?: "", isChecked)
+                                            }
+                                        )
+                                        Spacer(Modifier.height(16.dp))
+                                    }
+
+                                    if (ScreenCaptureProtection.isSupported) {
+                                        var isCaptureBlocked by remember { mutableStateOf(viewModel.isScreenCaptureBlocked()) }
+
+                                        AppSwitchButton(
+                                            title = "Block Screenshots",
+                                            checked = isCaptureBlocked,
+                                            onCheckedChange = { isChecked ->
+                                                isCaptureBlocked = isChecked
+                                                viewModel.setScreenCaptureBlocked(isChecked)
                                             }
                                         )
                                         Spacer(Modifier.height(16.dp))
@@ -316,13 +322,11 @@ fun SettingsScreen(
                                 SettingsStep.SUCCESS -> {
                                     Text("Success!", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                                     Spacer(Modifier.height(16.dp))
-                                    Button(
+                                    AppButton(
+                                        text = "Back to Dashboard",
                                         onClick = onBack,
-                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                                         modifier = Modifier.height(50.dp).width(200.dp)
-                                    ) {
-                                        Text("Back to Dashboard", fontWeight = FontWeight.Bold)
-                                    }
+                                    )
                                 }
                             }
                         }
@@ -334,14 +338,11 @@ fun SettingsScreen(
                     val buttonText = if (step == SettingsStep.MENU) "Close" else "Back"
                     val buttonAction = if (step == SettingsStep.MENU) onBack else { { resetToMenu() } }
 
-                    TextButton(onClick = buttonAction, modifier = Modifier.height(48.dp)) {
-                        Text(
-                            buttonText,
-                            color = MaterialTheme.colorScheme.error,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 18.sp
-                        )
-                    }
+                    AppTextButton(
+                        text = buttonText,
+                        onClick = buttonAction,
+                        modifier = Modifier.height(48.dp)
+                    )
                 }
             }
         )
@@ -369,12 +370,11 @@ fun SettingsScreen(
                         modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(100.dp).padding(bottom = 32.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        TextButton(
+                        AppTextButton(
+                            text = "Cancel",
                             onClick = { resetToMenu() },
                             modifier = Modifier.height(48.dp)
-                        ) {
-                            Text("Cancel", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-                        }
+                        )
                     }
                 }
             }
@@ -388,13 +388,10 @@ fun SettingsMenuButton(
     color: Color = MaterialTheme.colorScheme.onBackground,
     onClick: () -> Unit
 ) {
-    OutlinedButton(
+    AppOutlinedButton(
+        text = text,
         onClick = onClick,
         modifier = Modifier.fillMaxWidth().height(60.dp),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = color),
-        border = BorderStroke(1.dp, color.copy(alpha = 0.5f))
-    ) {
-        Text(text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-    }
+        textColor = color
+    )
 }
