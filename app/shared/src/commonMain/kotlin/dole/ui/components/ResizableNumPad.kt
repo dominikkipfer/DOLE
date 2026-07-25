@@ -1,7 +1,6 @@
 package dole.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,20 +12,21 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
+import com.mohamedrejeb.calf.ui.gesture.adaptiveClickable
 
 @Composable
 fun ResizableNumPad(buttonSize: Dp, textSize: TextUnit, onDigit: (String) -> Unit, onDelete: () -> Unit) {
     val spacing = buttonSize * 0.25f
+    val digitContainer = MaterialTheme.colorScheme.surfaceVariant
+    val digitContent = MaterialTheme.colorScheme.onSurfaceVariant
 
     Column(verticalArrangement = Arrangement.spacedBy(spacing), horizontalAlignment = Alignment.CenterHorizontally) {
         val rows = listOf(
@@ -40,36 +40,30 @@ fun ResizableNumPad(buttonSize: Dp, textSize: TextUnit, onDigit: (String) -> Uni
             Row(horizontalArrangement = Arrangement.spacedBy(spacing)) {
                 for (key in row) {
                     if (key == "DEL") {
-                        Surface(
-                            onClick = onDelete,
-                            shape = CircleShape,
-                            color = Color.Transparent,
-                            modifier = Modifier.size(buttonSize)
+                        Box(
+                            modifier = Modifier
+                                .size(buttonSize)
+                                .clip(CircleShape)
+                                .adaptiveClickable(shape = CircleShape, onClick = onDelete),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.Backspace,
-                                    contentDescription = "Delete",
-                                    tint = MaterialTheme.colorScheme.onBackground,
-                                    modifier = Modifier.size(buttonSize * 0.4f)
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Backspace,
+                                contentDescription = "Delete",
+                                tint = MaterialTheme.colorScheme.onBackground,
+                                modifier = Modifier.size(buttonSize * 0.4f)
+                            )
                         }
                     } else if (key.isNotEmpty()) {
                         Box(
                             modifier = Modifier
                                 .size(buttonSize)
                                 .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .clickable { onDigit(key) },
+                                .background(digitContainer)
+                                .adaptiveClickable(shape = CircleShape) { onDigit(key) },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = key,
-                                fontSize = textSize,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Text(text = key, fontSize = textSize, fontWeight = FontWeight.SemiBold, color = digitContent)
                         }
                     } else {
                         Spacer(Modifier.size(buttonSize))

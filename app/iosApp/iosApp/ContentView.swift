@@ -1,12 +1,10 @@
 import SwiftUI
+import shared
 
 struct ContentView: View {
-    init() {
-        CoreBridge.install()
-    }
+    let viewModel: WalletViewModel
 
     var body: some View {
-        ComposeView()
-            .ignoresSafeArea(.all)
+        ComposeView(viewModel: viewModel).ignoresSafeArea(.all)
     }
 }

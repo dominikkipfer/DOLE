@@ -1,85 +1,124 @@
 import Foundation
 import shared
 
-enum CoreBridge {
+typealias SharedPeerConnection = shared.PeerConnection
+typealias SharedTransportStatus = shared.TransportStatus
+
+nonisolated private func rustStartGlobalSync(_ path: String) { startGlobalSync(storagePath: path) }
+nonisolated private func rustStopGlobalSync() { stopGlobalSync() }
+nonisolated private func rustBytesToHex(_ bytes: Data) -> String { bytesToHex(bytes: bytes) }
+nonisolated private func rustHexToBytes(_ value: String) -> Data { hexToBytes(s: value) }
+nonisolated private func rustGetPersonIdAsHex(_ pubKey: Data) -> String { getPersonIdAsHex(pubKey: pubKey) }
+nonisolated private func rustVerifyCardCertificate(_ pubKey: Data, _ cert: Data) -> Bool { verifyCardCertificate(pubKey: pubKey, cert: cert) }
+nonisolated private func rustResetLedger(_ path: String) -> Bool { resetLedger(storagePath: path) }
+nonisolated private func rustStartBleAdvertising(_ path: String) -> Bool { startBleAdvertising(storagePath: path) }
+nonisolated private func rustStopBleAdvertising() { stopBleAdvertising() }
+nonisolated private func rustSetInternetEnabled(_ enabled: Bool) { setInternetEnabled(enabled: enabled) }
+nonisolated private func rustSetIrohEnabled(_ enabled: Bool) { setIrohEnabled(enabled: enabled) }
+nonisolated private func rustTransportStatus() -> SharedTransportStatus {
+    let status = transportStatus()
+    return SharedTransportStatus(ble: status.ble, iroh: status.iroh, internet: status.internet)
+}
+nonisolated private func rustConnectedPeers() -> [SharedPeerConnection] {
+    connectedPeers().map {
+        SharedPeerConnection(sessionId: $0.sessionId, ble: $0.ble, mdns: $0.mdns, internet: $0.internet)
+    }
+}
+
+nonisolated final class CoreBridge: NSObject, IosCore, @unchecked Sendable {
+
     static func install() {
-        CoreWrapperKt.swiftStartGlobalSyncAction = { path in
-            startGlobalSync(storagePath: path)
-        }
+        CoreWrapperKt.installIosCore(core: CoreBridge())
+    }
 
-        CoreWrapperKt.swiftStopGlobalSyncAction = {
-            stopGlobalSync()
-        }
+    func startGlobalSync(storagePath: String) {
+        rustStartGlobalSync(storagePath)
+    }
 
-        CoreWrapperKt.swiftInitAction = { onStateUpdated, path, publicKeyId, publicKeyFull in
-            AppEngine.shared.stateHandler = { balance, json in
-                onStateUpdated(KotlinLong(value: balance), json)
-            }
-            AppEngine.shared.ledger = Ledger.initLedger(
-                listener: AppEngine.shared,
-                storagePath: path,
-                publicKeyId: publicKeyId,
-                publicKeyFull: publicKeyFull
-            )
-        }
+    func stopGlobalSync() {
+        rustStopGlobalSync()
+    }
 
-        CoreWrapperKt.swiftShutdownAction = {
-            AppEngine.shared.ledger?.shutdown()
-            AppEngine.shared.ledger = nil
-            AppEngine.shared.stateHandler = nil
+    func doInitLedger(
+        onStateUpdated: @escaping (KotlinLong, String) -> Void,
+        storagePath: String,
+        publicKeyId: String,
+        publicKeyFull: String
+    ) {
+        AppEngine.shared.stateHandler = { balance, json in
+            onStateUpdated(KotlinLong(value: balance), json)
         }
+        AppEngine.shared.ledger = Ledger.initLedger(
+            listener: AppEngine.shared,
+            storagePath: storagePath,
+            publicKeyId: publicKeyId,
+            publicKeyFull: publicKeyFull
+        )
+    }
 
-        CoreWrapperKt.swiftGenesisAction = { sigHex, certHex in
-            AppEngine.shared.ledger?.genesis(sigHex: sigHex, certHex: certHex)
-        }
+    func shutdown() {
+        AppEngine.shared.ledger?.shutdown()
+        AppEngine.shared.ledger = nil
+        AppEngine.shared.stateHandler = nil
+    }
 
-        CoreWrapperKt.swiftMintAction = { amount, seq, sigHex in
-            AppEngine.shared.ledger?.mint(
-                delta: int64Value(amount),
-                seq: int64Value(seq),
-                sigHex: sigHex
-            )
-        }
+    func resetLedger(storagePath: String) -> Bool {
+        rustResetLedger(storagePath)
+    }
 
-        CoreWrapperKt.swiftBurnAction = { amount, seq, sigHex in
-            AppEngine.shared.ledger?.burn(
-                delta: int64Value(amount),
-                seq: int64Value(seq),
-                sigHex: sigHex
-            )
-        }
+    func genesis(sigHex: String, certHex: String) {
+        AppEngine.shared.ledger?.genesis(sigHex: sigHex, certHex: certHex)
+    }
 
-        CoreWrapperKt.swiftSendAction = { target, amount, seq, sigHex in
-            AppEngine.shared.ledger?.send(
-                targetPubKey: target,
-                delta: int64Value(amount),
-                seq: int64Value(seq),
-                sigHex: sigHex
-            )
-        }
+    func mint(goc: Int64, seq: Int64, sigHex: String) -> Bool {
+        AppEngine.shared.ledger?.mint(goc: goc, seq: seq, sigHex: sigHex) ?? false
+    }
 
-        CoreWrapperKt.swiftBytesToHexAction = { bytes in
-            bytesToHex(bytes: data(from: bytes))
-        }
+    func burn(goc: Int64, seq: Int64, sigHex: String) -> Bool {
+        AppEngine.shared.ledger?.burn(goc: goc, seq: seq, sigHex: sigHex) ?? false
+    }
 
-        CoreWrapperKt.swiftHexToBytesAction = { value in
-            kotlinByteArray(from: hexToBytes(s: value))
-        }
+    func send(targetPubKey: String, goc: Int64, seq: Int64, sigHex: String) -> Bool {
+        AppEngine.shared.ledger?.send(targetPubKey: targetPubKey, goc: goc, seq: seq, sigHex: sigHex) ?? false
+    }
 
-        CoreWrapperKt.swiftGetPersonIdAsHexAction = { bytes in
-            getPersonIdAsHex(pubKey: data(from: bytes))
-        }
+    func bytesToHex(bytes: KotlinByteArray) -> String {
+        rustBytesToHex(data(from: bytes))
+    }
 
-        CoreWrapperKt.swiftVerifyCardCertificateAction = { pubKey, cert in
-            verifyCardCertificate(pubKey: data(from: pubKey), cert: data(from: cert))
-        }
+    func hexToBytes(s: String) -> KotlinByteArray {
+        kotlinByteArray(from: rustHexToBytes(s))
+    }
 
-        CoreWrapperKt.swiftStartBleAdvertisingAction = { path in
-            startBleAdvertising(storagePath: path)
-        }
+    func getPersonIdAsHex(pubKey: KotlinByteArray) -> String {
+        rustGetPersonIdAsHex(data(from: pubKey))
+    }
 
-        CoreWrapperKt.swiftStopBleAdvertisingAction = {
-            stopBleAdvertising()
-        }
+    func verifyCardCertificate(pubKey: KotlinByteArray, cert: KotlinByteArray) -> Bool {
+        rustVerifyCardCertificate(data(from: pubKey), data(from: cert))
+    }
+
+    func startBleAdvertising(storagePath: String) -> Bool {
+        rustStartBleAdvertising(storagePath)
+    }
+
+    func stopBleAdvertising() {
+        rustStopBleAdvertising()
+    }
+
+    func setInternetEnabled(enabled: Bool) {
+        rustSetInternetEnabled(enabled)
+    }
+
+    func setIrohEnabled(enabled: Bool) {
+        rustSetIrohEnabled(enabled)
+    }
+
+    func connectedPeers() -> [SharedPeerConnection] {
+        rustConnectedPeers()
+    }
+
+    func transportStatus() -> SharedTransportStatus {
+        rustTransportStatus()
     }
 }

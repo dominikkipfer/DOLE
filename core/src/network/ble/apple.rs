@@ -1,5 +1,5 @@
 use std::ops::Deref;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -14,18 +14,26 @@ use objc2_core_bluetooth::{
 };
 use objc2_foundation::{NSArray, NSData, NSDictionary, NSError, NSNumber, NSString};
 
-use crate::constants::BLE_SCAN_STATUS_LOG_INTERVAL_MS;
+use crate::constants::{BLE_PAYLOAD_DWELL_MS, BLE_SCAN_STATUS_LOG_INTERVAL_MS, BLE_SERVICE_DATA_OVERHEAD_SIZE};
 
-use super::{LOG_TARGET, ingest_payload, log_payload};
+use super::{
+    LOG_TARGET, advertiser_started, advertiser_stopped, build_initial_payload, ingest_payload,
+    log_payload, next_payload
+};
 
 const APPLE_BLE_SERVICE_UUID_16: &str = "D01E";
 const SCAN_STATUS_LOG_INTERVAL: Duration = Duration::from_millis(BLE_SCAN_STATUS_LOG_INTERVAL_MS as u64);
+const BLE_PAYLOAD_DWELL: Duration = Duration::from_millis(BLE_PAYLOAD_DWELL_MS as u64);
+const APPLE_BLE_MAX_ADVERTISEMENT_DATA_LENGTH: usize = 251;
 
 static STATE: LazyLock<Mutex<AppleBleState>> = LazyLock::new(|| Mutex::new(AppleBleState::default()));
 static APPLE_BLE_OBSERVED_ADVERTISEMENTS: AtomicU64 = AtomicU64::new(0);
 static APPLE_BLE_DOLE_RX_EVENTS: AtomicU64 = AtomicU64::new(0);
 static APPLE_BLE_LAST_DOLE_RX_MS: AtomicU64 = AtomicU64::new(0);
 static APPLE_BLE_LOGGER_EPOCH: AtomicU64 = AtomicU64::new(0);
+static APPLE_BLE_ADVERTISING_ACTIVE: AtomicBool = AtomicBool::new(false);
+static APPLE_BLE_RADIO_ON: AtomicBool = AtomicBool::new(false);
+static APPLE_BLE_TX_EPOCH: AtomicU64 = AtomicU64::new(0);
 
 struct SendRetained<T: ?Sized>(Retained<T>);
 
@@ -46,6 +54,7 @@ struct AppleBleState {
     delegate: Option<SendRetained<AppleBleDelegate>>,
     peripheral_manager: Option<SendRetained<CBPeripheralManager>>,
     central_manager: Option<SendRetained<CBCentralManager>>,
+    current_payload: Option<Vec<u8>>,
     active: bool
 }
 
@@ -60,8 +69,12 @@ define_class!(
         #[unsafe(method(peripheralManagerDidUpdateState:))]
         unsafe fn peripheral_manager_did_update_state(&self, peripheral: &CBPeripheralManager) {
             match unsafe { peripheral.state() } {
-                CBManagerState::PoweredOn => start_apple_advertising(peripheral),
+                CBManagerState::PoweredOn => {
+                    APPLE_BLE_RADIO_ON.store(true, Ordering::Relaxed);
+                    start_apple_advertising(peripheral);
+                }
                 state => {
+                    APPLE_BLE_RADIO_ON.store(false, Ordering::Relaxed);
                     log::warn!(target: LOG_TARGET, "Apple BLE peripheral manager unavailable state={state:?}");
                 }
             }
@@ -69,15 +82,13 @@ define_class!(
 
         #[unsafe(method(peripheralManagerDidStartAdvertising:error:))]
         unsafe fn peripheral_manager_did_start_advertising_error(
-            &self,
-            _peripheral: &CBPeripheralManager,
-            error: Option<&NSError>
+            &self, _peripheral: &CBPeripheralManager, error: Option<&NSError>
         ) {
             match error {
                 Some(error) => {
                     log::warn!(target: LOG_TARGET, "Apple BLE advertising failed: {error:?}");
                 }
-                None => log::info!(target: LOG_TARGET, "Apple BLE advertising started")
+                None => log::debug!(target: LOG_TARGET, "Apple BLE advertising started")
             }
         }
     }
@@ -118,6 +129,19 @@ impl AppleBleDelegate {
 pub(super) fn start(storage_path: &str) -> bool {
     stop();
 
+    let initial_payload = build_initial_payload(storage_path);
+    let max_payload_bytes =
+        APPLE_BLE_MAX_ADVERTISEMENT_DATA_LENGTH.saturating_sub(BLE_SERVICE_DATA_OVERHEAD_SIZE as usize);
+    if initial_payload.len() > max_payload_bytes {
+        log::warn!(
+            target: LOG_TARGET,
+            "Apple BLE advertising skipped because payload is too large, payloadBytes={}, maxServicePayloadBytes={}",
+            initial_payload.len(),
+            max_payload_bytes
+        );
+        return false;
+    }
+
     let delegate = AppleBleDelegate::new();
     let peripheral_delegate: &ProtocolObject<dyn CBPeripheralManagerDelegate> = ProtocolObject::from_ref(&*delegate);
     let central_delegate: &ProtocolObject<dyn CBCentralManagerDelegate> = ProtocolObject::from_ref(&*delegate);
@@ -136,16 +160,63 @@ pub(super) fn start(storage_path: &str) -> bool {
     state.delegate = Some(SendRetained(delegate));
     state.peripheral_manager = Some(SendRetained(peripheral_manager));
     state.central_manager = Some(SendRetained(central_manager));
+    state.current_payload = Some(initial_payload);
     state.active = true;
     drop(state);
 
     APPLE_BLE_OBSERVED_ADVERTISEMENTS.store(0, Ordering::Relaxed);
     APPLE_BLE_DOLE_RX_EVENTS.store(0, Ordering::Relaxed);
     APPLE_BLE_LAST_DOLE_RX_MS.store(0, Ordering::Relaxed);
+    APPLE_BLE_ADVERTISING_ACTIVE.store(true, Ordering::Relaxed);
+    advertiser_started();
+    start_payload_rotation_worker(storage_path.to_string(), max_payload_bytes);
     start_scan_status_logger();
 
     log::info!(target: LOG_TARGET, "Apple BLE advertising backend starting");
     true
+}
+
+fn start_payload_rotation_worker(storage_path: String, max_payload_bytes: usize) {
+    let epoch = APPLE_BLE_TX_EPOCH.fetch_add(1, Ordering::Relaxed) + 1;
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(BLE_PAYLOAD_DWELL);
+            if APPLE_BLE_TX_EPOCH.load(Ordering::Relaxed) != epoch
+                || !APPLE_BLE_ADVERTISING_ACTIVE.load(Ordering::Relaxed)
+            {
+                return;
+            }
+            let Some(payload) = next_payload(&storage_path, max_payload_bytes) else {
+                return;
+            };
+            if APPLE_BLE_TX_EPOCH.load(Ordering::Relaxed) != epoch {
+                return;
+            }
+            update_apple_advertising_payload(payload);
+        }
+    });
+}
+
+fn update_apple_advertising_payload(payload: Vec<u8>) {
+    let Ok(mut state) = STATE.lock() else {
+        return;
+    };
+    if !state.active {
+        return;
+    }
+    if state.current_payload.as_deref() == Some(payload.as_slice()) {
+        return;
+    }
+
+    let advertisement = build_apple_advertisement(&payload);
+    state.current_payload = Some(payload);
+    let Some(manager) = state.peripheral_manager.as_ref() else {
+        return;
+    };
+    unsafe {
+        manager.stopAdvertising();
+        manager.startAdvertising(Some(&advertisement));
+    }
 }
 
 fn start_scan_status_logger() {
@@ -185,8 +256,16 @@ fn now_millis() -> u64 {
         .unwrap_or_default()
 }
 
+pub(super) fn is_advertising() -> bool {
+    APPLE_BLE_ADVERTISING_ACTIVE.load(Ordering::Relaxed) && APPLE_BLE_RADIO_ON.load(Ordering::Relaxed)
+}
+
 pub(super) fn stop() {
     APPLE_BLE_LOGGER_EPOCH.fetch_add(1, Ordering::Relaxed);
+    APPLE_BLE_TX_EPOCH.fetch_add(1, Ordering::Relaxed);
+    if APPLE_BLE_ADVERTISING_ACTIVE.swap(false, Ordering::Relaxed) {
+        advertiser_stopped();
+    }
     let Ok(mut state) = STATE.lock() else {
         return;
     };
@@ -207,19 +286,33 @@ fn start_apple_advertising(peripheral: &CBPeripheralManager) {
         return;
     }
 
+    let payload = {
+        let Ok(state) = STATE.lock() else {
+            return;
+        };
+        state.current_payload.clone()
+    };
+    let Some(payload) = payload else {
+        return;
+    };
+
+    let advertisement = build_apple_advertisement(&payload);
+    unsafe { peripheral.startAdvertising(Some(&advertisement)) };
+}
+
+fn build_apple_advertisement(_payload: &[u8]) -> Retained<NSDictionary<NSString, AnyObject>> {
     let service_uuid = cb_uuid(APPLE_BLE_SERVICE_UUID_16);
     let service_uuids = NSArray::<CBUUID>::from_slice(&[&service_uuid]);
     let local_name = NSString::from_str("DOLE");
+
     let keys = unsafe {
         [
             CBAdvertisementDataServiceUUIDsKey,
-            CBAdvertisementDataLocalNameKey
+            CBAdvertisementDataLocalNameKey,
         ]
     };
     let values: [Retained<AnyObject>; 2] = [service_uuids.into(), local_name.into()];
-    let advertisement = NSDictionary::<NSString, AnyObject>::from_retained_objects(&keys, &values);
-
-    unsafe { peripheral.startAdvertising(Some(&advertisement)) };
+    NSDictionary::<NSString, AnyObject>::from_retained_objects(&keys, &values)
 }
 
 fn start_scan(central: &CBCentralManager) {

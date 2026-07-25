@@ -86,6 +86,10 @@ pub fn start_ble_advertising(storage_path: String) -> bool {
     platform::start(&storage_path)
 }
 
+pub(crate) fn advertising_active() -> bool {
+    platform::is_advertising()
+}
+
 #[uniffi::export]
 pub fn stop_ble_advertising() {
     logging::init_logging();
@@ -94,13 +98,26 @@ pub fn stop_ble_advertising() {
 
 #[cfg(target_os = "android")]
 mod platform {
-    pub(super) use super::android::{start, stop};
+    pub(super) use super::android::{is_advertising, start, stop};
 }
 #[cfg(target_os = "windows")]
 mod platform {
-    pub(super) use super::windows::{start, stop};
+    pub(super) use super::windows::{is_advertising, start, stop};
 }
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 mod platform {
-    pub(super) use super::apple::{start, stop};
+    pub(super) use super::apple::{is_advertising, start, stop};
+}
+#[cfg(not(any(target_os = "android", target_os = "windows", target_os = "ios", target_os = "macos")))]
+mod platform {
+    pub(super) fn start(_storage_path: &str) -> bool {
+        log::info!(target: super::LOG_TARGET, "BLE transport unavailable on this platform");
+        false
+    }
+
+    pub(super) fn stop() {}
+
+    pub(super) fn is_advertising() -> bool {
+        false
+    }
 }

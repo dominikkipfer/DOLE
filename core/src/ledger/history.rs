@@ -9,6 +9,7 @@ use super::LedgerStateListener;
 use super::repo::for_each_commit;
 
 pub(super) fn notify_ui_internal(repo: &gix::Repository, my_key: &str, listener: &Arc<dyn LedgerStateListener>) {
+    let is_observer = my_key.is_empty();
     let mut raw_history = Vec::new();
 
     if let Ok(refs) = repo.references()
@@ -37,7 +38,7 @@ pub(super) fn notify_ui_internal(repo: &gix::Repository, my_key: &str, listener:
                     let is_own_branch = b_name.eq_ignore_ascii_case(my_key);
                     let is_incoming_send = t == "S" && target.eq_ignore_ascii_case(my_key);
                     let is_peer_metadata = t == "G";
-                    if is_own_branch || is_incoming_send || is_peer_metadata {
+                    if is_observer || is_own_branch || is_incoming_send || is_peer_metadata {
                         raw_history.push((
                             id.to_hex().to_string(),
                             t,

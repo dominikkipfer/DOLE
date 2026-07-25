@@ -331,11 +331,41 @@ fn start_windows_ble_watcher() -> bool {
 }
 
 #[cfg(target_os = "windows")]
+const ABORTED_SCAN_STATE: &str = "aborted, bluetooth unavailable";
+
+fn windows_ble_scan_state_label() -> &'static str {
+    use windows::Devices::Bluetooth::Advertisement::BluetoothLEAdvertisementWatcherStatus as Status;
+
+    let Ok(guard) = WINDOWS_BLE_WATCHER.lock() else {
+        return "unknown";
+    };
+    let Some(watcher) = guard.as_ref() else {
+        return "stopped";
+    };
+    match watcher.watcher.Status() {
+        Ok(Status::Started) => "active",
+        Ok(Status::Aborted) => ABORTED_SCAN_STATE,
+        Ok(Status::Stopping) | Ok(Status::Stopped) => "stopped",
+        Ok(Status::Created) => "not started",
+        _ => "unknown"
+    }
+}
+
 fn start_windows_ble_scan_status_logger() {
     std::thread::spawn(|| {
         while WINDOWS_BLE_SCAN_ACTIVE.load(Ordering::Relaxed) {
             std::thread::sleep(BLE_SCAN_STATUS_LOG_INTERVAL);
             if !WINDOWS_BLE_SCAN_ACTIVE.load(Ordering::Relaxed) {
+                break;
+            }
+
+            let scan_state = windows_ble_scan_state_label();
+            if scan_state == ABORTED_SCAN_STATE {
+                log::warn!(
+                    target: LOG_TARGET,
+                    "Windows BLE stopping, radio turned off while scanning"
+                );
+                stop();
                 break;
             }
 
@@ -375,7 +405,8 @@ fn start_windows_ble_scan_status_logger() {
 
             log::info!(
                 target: LOG_TARGET,
-                "RX Windows BLE scan active, observedAdvertisements={}, remoteRxEvents={}, selfRxEvents={}, uniqueRemoteSessions={}, via=ble sessions={}, {}",
+                "RX Windows BLE scan {}, observedAdvertisements={}, remoteRxEvents={}, selfRxEvents={}, uniqueRemoteSessions={}, via=ble sessions={}, {}",
+                scan_state,
                 observed,
                 observed_dole,
                 observed_self,
@@ -509,6 +540,21 @@ fn remember_windows_ble_rx(payload: &[u8]) {
 }
 
 #[cfg(target_os = "windows")]
+pub(super) fn is_advertising() -> bool {
+    use windows::Devices::Bluetooth::Advertisement::BluetoothLEAdvertisementPublisherStatus as Status;
+
+    if !WINDOWS_BLE_ADVERTISING_ACTIVE.load(Ordering::Relaxed) {
+        return false;
+    }
+    let Ok(guard) = WINDOWS_BLE_PUBLISHER.lock() else {
+        return false;
+    };
+    let Some(publisher) = guard.as_ref() else {
+        return false;
+    };
+    !matches!(publisher.Status(), Ok(Status::Aborted) | Ok(Status::Created))
+}
+
 pub(super) fn stop() {
     WINDOWS_BLE_ADVERTISING_ACTIVE.store(false, Ordering::Relaxed);
     super::advertiser_stopped();

@@ -1,9 +1,6 @@
-@file:OptIn(ExperimentalKotlinGradlePluginApi::class)
-
 import com.mikepenz.aboutlibraries.plugin.DuplicateMode
 import com.mikepenz.aboutlibraries.plugin.DuplicateRule
 import org.gradle.api.GradleException
-import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
 import org.jetbrains.kotlin.konan.target.HostManager
 
@@ -119,9 +116,11 @@ kotlin {
                 implementation(libs.compose.material3)
                 implementation(libs.compose.ui)
                 implementation(libs.compose.animation)
+                implementation(libs.calf.ui)
                 implementation(libs.navigationevent.compose)
                 implementation(libs.compose.components.resources)
                 implementation(libs.multiplatform.settings)
+                implementation(libs.kotlinx.datetime)
                 implementation(libs.kotlinx.serialization.json)
             }
         }
@@ -142,6 +141,14 @@ kotlin {
             dependencies {
                 implementation(libs.kotlinx.coroutines.swing)
                 implementation(libs.jna)
+            }
+        }
+
+        if (HostManager.hostIsMac) {
+            named("iosMain") {
+                dependencies {
+                    implementation(libs.backdrop)
+                }
             }
         }
     }
@@ -170,6 +177,7 @@ val syncAndroidRustBinaries = tasks.register<Copy>("syncAndroidRustBinaries") {
 val buildIosRust = tasks.register<Exec>("buildIosRust") {
     dependsOn(generateConstantsTask)
     workingDir = coreDir
+    environment("IPHONEOS_DEPLOYMENT_TARGET", "26.0")
     cargoCommand("build", "--target", "aarch64-apple-ios", "--release")
 }
 
@@ -198,8 +206,7 @@ tasks.matching { it.name == "jvmProcessResources" || it.name == "jvmTestProcessR
 
 if (HostManager.hostIsMac) {
     tasks.matching {
-        it.name.contains("Ios", ignoreCase = true) &&
-                (it.name.contains("XCFramework", ignoreCase = true) || it.name.startsWith("link"))
+        it.name.contains("Ios", ignoreCase = true) && (it.name.contains("XCFramework", ignoreCase = true) || it.name.startsWith("link"))
     }.configureEach {
         dependsOn(generateUniffiSwiftBindings)
     }

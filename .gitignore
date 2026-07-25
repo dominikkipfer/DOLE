@@ -12,6 +12,7 @@ dist/
 target/
 **/*.rs.bk
 /core/src/constants.rs
+/hub/src/constants.rs
 *.dll
 *.so
 
@@ -90,7 +91,6 @@ bin/
 # --------------------
 # Xcode
 # --------------------
-.vscode/
 xcuserdata/
 
 # --------------------

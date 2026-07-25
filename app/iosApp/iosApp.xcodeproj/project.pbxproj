@@ -10,6 +10,9 @@
 		0AD561062F94073D00C2801F /* core.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AD561022F94073D00C2801F /* core.swift */; };
 		0ADE85092F9436500035D3E7 /* shared.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0ADE85072F9435D30035D3E7 /* shared.xcframework */; };
 		0ADE850A2F9436500035D3E7 /* shared.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 0ADE85072F9435D30035D3E7 /* shared.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		FE2A6F2A2FFBFB8C00ADA03A /* CoreBluetooth.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FE2A6F292FFBFB8C00ADA03A /* CoreBluetooth.framework */; };
+		FE2A6F2C2FFBFB9900ADA03A /* SystemConfiguration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FE2A6F2B2FFBFB9900ADA03A /* SystemConfiguration.framework */; };
+		FE2A6F2E2FFBFBA300ADA03A /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FE2A6F2D2FFBFBA300ADA03A /* Network.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -33,10 +36,13 @@
 		0AD561042F94073D00C2801F /* coreFFI.modulemap */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.module-map"; path = coreFFI.modulemap; sourceTree = "<group>"; };
 		0ADE85052F9431EA0035D3E7 /* libcore.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libcore.a; path = "../../core/target/aarch64-apple-ios/release/libcore.a"; sourceTree = "<group>"; };
 		0ADE85072F9435D30035D3E7 /* shared.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = shared.xcframework; path = ../shared/build/XCFrameworks/release/shared.xcframework; sourceTree = SOURCE_ROOT; };
+		FE2A6F292FFBFB8C00ADA03A /* CoreBluetooth.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreBluetooth.framework; path = System/Library/Frameworks/CoreBluetooth.framework; sourceTree = SDKROOT; };
+		FE2A6F2B2FFBFB9900ADA03A /* SystemConfiguration.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SystemConfiguration.framework; path = System/Library/Frameworks/SystemConfiguration.framework; sourceTree = SDKROOT; };
+		FE2A6F2D2FFBFBA300ADA03A /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		0A3EFFF92F944F7A00E8DFA8 /* Exceptions for "iosApp" folder in "iosApp" target */ = {
+		0A3EFFF92F944F7A00E8DFA8 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
@@ -49,7 +55,11 @@
 		0AD560EB2F93E4A000C2801F /* iosApp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				0A3EFFF92F944F7A00E8DFA8 /* Exceptions for "iosApp" folder in "iosApp" target */,
+				0A3EFFF92F944F7A00E8DFA8 /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
 			);
 			path = iosApp;
 			sourceTree = "<group>";
@@ -61,6 +71,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FE2A6F2E2FFBFBA300ADA03A /* Network.framework in Frameworks */,
+				FE2A6F2C2FFBFB9900ADA03A /* SystemConfiguration.framework in Frameworks */,
+				FE2A6F2A2FFBFB8C00ADA03A /* CoreBluetooth.framework in Frameworks */,
 				0ADE85092F9436500035D3E7 /* shared.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -76,6 +89,7 @@
 				0AD561052F94073D00C2801F /* swift */,
 				0ADE85052F9431EA0035D3E7 /* libcore.a */,
 				0ADE85072F9435D30035D3E7 /* shared.xcframework */,
+				FE2A6F282FFBFB8C00ADA03A /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -97,6 +111,16 @@
 			name = swift;
 			path = ../shared/build/generated/uniffi/swift;
 			sourceTree = SOURCE_ROOT;
+		};
+		FE2A6F282FFBFB8C00ADA03A /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				FE2A6F2D2FFBFBA300ADA03A /* Network.framework */,
+				FE2A6F2B2FFBFB9900ADA03A /* SystemConfiguration.framework */,
+				FE2A6F292FFBFB8C00ADA03A /* CoreBluetooth.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
@@ -213,6 +237,7 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				"CODE_SIGN_ENTITLEMENTS[sdk=*]" = iosApp/iosApp.entitlements;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -276,6 +301,7 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				"CODE_SIGN_ENTITLEMENTS[sdk=*]" = iosApp/iosApp.entitlements;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
@@ -312,6 +338,9 @@
 				INFOPLIST_FILE = iosApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = DOLE;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
+				INFOPLIST_KEY_NFCReaderUsageDescription = "DOLE uses NFC to communicate with your DOLE smart card.";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "DOLE uses Bluetooth to exchange wallet sync data with nearby devices.";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "DOLE uses FaceID for easy login to your card account.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -329,7 +358,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../shared/build/generated/uniffi/swift";
 				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/iosApp/iosApp-Bridging-Header.h";
@@ -352,6 +381,9 @@
 				INFOPLIST_FILE = iosApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = DOLE;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
+				INFOPLIST_KEY_NFCReaderUsageDescription = "DOLE uses NFC to communicate with your DOLE smart card.";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "DOLE uses Bluetooth to exchange wallet sync data with nearby devices.";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "DOLE uses FaceID for easy login to your card account.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -369,7 +401,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../shared/build/generated/uniffi/swift";
 				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/iosApp/iosApp-Bridging-Header.h";

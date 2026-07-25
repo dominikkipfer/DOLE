@@ -2,7 +2,6 @@ package dole.viewmodel
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -17,8 +16,11 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -30,23 +32,26 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.zIndex
 import dole.data.models.StoredAccount
 import dole.ui.components.LocalCardPulse
 import dole.ui.components.NewCardOverlay
 import dole.ui.screens.AuthScreen
 import dole.ui.screens.DashboardScreen
+import dole.ui.screens.DeveloperScreen
 import dole.ui.screens.HomeScreen
 import dole.ui.screens.SettingsScreen
 import dole.ui.screens.SetupScreen
 import dole.ui.theme.DoleTheme
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun WalletApp(viewModel: WalletViewModel) {
-    DoleTheme {
+    DoleTheme(themeMode = viewModel.developer.themeMode) {
         val errorMessage = viewModel.errorMessage
         val userMessage = viewModel.userMessage
 
@@ -63,6 +68,7 @@ fun WalletApp(viewModel: WalletViewModel) {
 
         val snackbarHostState = remember { SnackbarHostState() }
         val scope = rememberCoroutineScope()
+        val focusManager = LocalFocusManager.current
 
         LaunchedEffect(errorMessage) {
             if (errorMessage != null && shouldShowSnackbar) {
@@ -86,6 +92,8 @@ fun WalletApp(viewModel: WalletViewModel) {
         var cachedLoginAccount by remember { mutableStateOf<StoredAccount?>(null) }
         if (viewModel.detectedAccount != null) cachedLoginAccount = viewModel.detectedAccount
 
+        val liveConnectedAccount = viewModel.physicallyConnectedCardAccount?.takeIf { viewModel.isCardConnected }
+
         val infiniteTransition = rememberInfiniteTransition(label = "global_pulse")
         val globalPulse by infiniteTransition.animateFloat(
             initialValue = 0f,
@@ -99,8 +107,8 @@ fun WalletApp(viewModel: WalletViewModel) {
 
         var manuallyDismissed by remember { mutableStateOf(false) }
 
-        LaunchedEffect(viewModel.isNewCardDetected) {
-            if (!viewModel.isNewCardDetected) manuallyDismissed = false
+        LaunchedEffect(viewModel.isNewCardDetected, viewModel.isCardConnected) {
+            if (viewModel.isCardConnected || !viewModel.isNewCardDetected) manuallyDismissed = false
         }
 
         val showNewCardOverlay = viewModel.isNewCardDetected && !manuallyDismissed &&
@@ -109,9 +117,16 @@ fun WalletApp(viewModel: WalletViewModel) {
         SharedTransitionLayout {
             CompositionLocalProvider(LocalCardPulse provides globalPulse) {
                 Scaffold(
+                    contentWindowInsets = WindowInsets(0),
                     snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-                    content = { paddingValues ->
-                        BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
+                    content = { contentPadding ->
+                        BoxWithConstraints(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(contentPadding)
+                                .windowInsetsPadding(WindowInsets.safeDrawing)
+                                .pointerInput(Unit) { detectTapGestures { focusManager.clearFocus() } }
+                        ) {
                             AnimatedContent(
                                 targetState = viewModel.currentScreen,
                                 label = "ScreenTransition",
@@ -128,18 +143,28 @@ fun WalletApp(viewModel: WalletViewModel) {
                                                 it
                                             )
                                         },
-                                        physicallyConnectedAccount = viewModel.physicallyConnectedCardAccount,
+                                        physicallyConnectedAccount = liveConnectedAccount,
                                         isOverlayVisible = showNewCardOverlay,
                                         initialSelectedAccountId = cachedLoginAccount?.id,
+                                        globalHistory = viewModel.globalHistory,
+                                        networkAccounts = viewModel.networkAccounts,
+                                        nameResolver = viewModel::getPeerName,
+                                        onNotify = { viewModel.showUserMessage(it) },
                                         sharedTransitionScope = this@SharedTransitionLayout,
-                                        animatedVisibilityScope = animatedVisibilityScope
+                                        animatedVisibilityScope = animatedVisibilityScope,
+                                        onLogoTap = { viewModel.developer.registerLogoTap() },
+                                        developerPane = if (viewModel.developer.isEnabled) {
+                                            { DeveloperScreen(viewModel) }
+                                        } else {
+                                            null
+                                        }
                                     )
                                     AppScreenState.LOGIN -> {
                                         val accountToShow = cachedLoginAccount
                                         if (accountToShow != null) {
                                             AuthScreen(
                                                 account = accountToShow,
-                                                physicallyConnectedAccount = viewModel.physicallyConnectedCardAccount,
+                                                physicallyConnectedAccount = liveConnectedAccount,
                                                 isBiometricsEnabled = viewModel.isBiometricsEnabled(accountToShow.id),
                                                 isError = isPinError,
                                                 onErrorShown = { viewModel.dismissError() },
@@ -154,7 +179,7 @@ fun WalletApp(viewModel: WalletViewModel) {
                                     }
                                     AppScreenState.SETUP -> {
                                         val targetCardId = viewModel.setupTargetCardId ?: "NULL"
-                                        val isTargetCardConnected = viewModel.currentDetectedCardId != null &&
+                                        val isTargetCardConnected = viewModel.isCardConnected &&
                                                 viewModel.currentDetectedCardId == targetCardId
 
                                         SetupScreen(
@@ -180,9 +205,7 @@ fun WalletApp(viewModel: WalletViewModel) {
                                     )
                                     AppScreenState.SETTINGS -> SettingsScreen(
                                         viewModel = viewModel,
-                                        onBack = { viewModel.currentScreen = AppScreenState.DASHBOARD },
-                                        sharedTransitionScope = this@SharedTransitionLayout,
-                                        animatedVisibilityScope = animatedVisibilityScope
+                                        onBack = { viewModel.currentScreen = AppScreenState.DASHBOARD }
                                     )
                                 }
                             }

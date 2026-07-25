@@ -8,35 +8,63 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dole.card.SmartCard
 import dole.core.CoreWrapper
-import dole.data.AccountRepository
-import dole.data.AccountStorage
+import dole.data.AccountPreferences
+import com.russhwolf.settings.Settings
+import dole.data.AccountRegistry
+import dole.data.CardSyncState
+import dole.data.DeveloperSettings
+import dole.data.HistoryFilter
 import dole.data.models.BurnTransaction
 import dole.data.models.GenesisTransaction
 import dole.data.models.MintTransaction
 import dole.data.models.SendTransaction
 import dole.data.models.StoredAccount
+import dole.data.models.LedgerJson
 import dole.data.models.Transaction
+import dole.data.models.amount
 import dole.utils.ProtocolSerializer
 import dole.utils.ScreenCaptureProtection
 import dole.wallet.WalletService
+import dole.wallet.unsyncedIncoming
 import kotlinx.coroutines.*
-import kotlinx.serialization.json.Json
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.time.Duration.Companion.milliseconds
 
 class WalletViewModel(
-    private val accountRepo: AccountRepository,
-    private val storage: AccountStorage,
+    private val accounts: AccountRegistry,
+    private val preferences: AccountPreferences,
+    private val cardSyncState: CardSyncState,
+    settings: Settings,
     private val card: SmartCard,
     private val storagePath: String
 ) {
     private fun Throwable.typeName(): String = this::class.simpleName ?: "Throwable"
 
     private val viewModelScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val queueMutex = Mutex()
     private var walletService: WalletService? = null
     private var sessionPin: String? = null
 
+    val developer = DeveloperSettings(
+        settings = settings,
+        accounts = accounts,
+        scope = viewModelScope,
+        storagePath = storagePath,
+        onAccountsDeleted = {
+            availableAccounts = accounts.getAllAccounts()
+            detectedAccount = null
+            physicallyConnectedCardAccount = null
+            isNewCardDetected = false
+            logout()
+        },
+        onLedgerCleared = { clearLedgerState() },
+        notify = { showUserMessage(it) },
+        reportError = { errorMessage = it }
+    )
+
     var currentScreen by mutableStateOf(AppScreenState.HOME)
-    var availableAccounts by mutableStateOf(accountRepo.getAllAccounts()); private set
+    var availableAccounts by mutableStateOf(accounts.getAllAccounts()); private set
     var detectedAccount by mutableStateOf<StoredAccount?>(null)
 
     var physicallyConnectedCardAccount by mutableStateOf<StoredAccount?>(null); private set
@@ -51,6 +79,10 @@ class WalletViewModel(
     var balance by mutableLongStateOf(0L); private set
     var isMinter by mutableStateOf(false); private set
 
+    var cardBalance by mutableStateOf<Long?>(null); private set
+    var isCardPinOutOfSync by mutableStateOf(false); private set
+
+    var processingActionId by mutableStateOf<String?>(null); private set
     var errorMessage by mutableStateOf<String?>(null); private set
     var userMessage by mutableStateOf<String?>(null); private set
     var syncStatus by mutableStateOf<String?>(null); private set
@@ -69,73 +101,33 @@ class WalletViewModel(
     private var isFirstSync = true
 
     var knownNetworkPeers by mutableStateOf<List<PeerOption>>(emptyList()); private set
-    var isSearchMode by mutableStateOf(false); private set
-    var filterTypes = mutableStateListOf<TxFilterType>()
-    var filterPeerQuery by mutableStateOf("")
-    var sortField by mutableStateOf(SortField.NONE)
-    var sortAscending by mutableStateOf(false)
+    val history = HistoryFilter()
 
     val isBalancePending by derivedStateOf { pendingActions.isNotEmpty() || _unsyncedTransactions.isNotEmpty() }
 
-    val filteredHistory by derivedStateOf {
-        val rawQuery = filterPeerQuery.trim().lowercase()
-        val selectedTypes = if (filterTypes.isEmpty()) TxFilterType.entries.toSet() else filterTypes.toSet()
-        val hasSendOrReceive = selectedTypes.contains(TxFilterType.SEND) || selectedTypes.contains(TxFilterType.RECEIVE)
-        val shouldCheckPeer = rawQuery.isNotEmpty() && hasSendOrReceive
+    val displayBalance by derivedStateOf { cardBalance ?: balance }
 
-        val pendingAsDisplay = pendingActions.map { action ->
-            val dummyId = "pending-${action.id}"
+    val filteredHistory by derivedStateOf {
+        val pending = pendingActions.map { action ->
+            val id = "pending-${action.id}"
+            val author = currentId ?: ""
             val tx: Transaction = when (action.type) {
-                "MINT" -> MintTransaction(id = dummyId, author = currentId ?: "", timestamp = 0L, seq = 0L, signature = "", goc = action.amount)
-                "BURN" -> BurnTransaction(id = dummyId, author = currentId ?: "", timestamp = 0L, seq = 0L, signature = "", goc = action.amount)
-                "SEND" -> SendTransaction(id = dummyId, author = currentId ?: "", timestamp = 0L, seq = 0L, signature = "", target = action.targetId ?: "?", goc = action.amount)
-                else -> MintTransaction(id = dummyId, author = "", timestamp = 0L, seq = 0L, signature = "", goc = 0L)
+                "BURN" -> BurnTransaction(id, author, 0L, 0L, "", action.amount)
+                "SEND" -> SendTransaction(id, author, 0L, 0L, "", action.targetId ?: "?", action.amount)
+                else -> MintTransaction(id, author, 0L, 0L, "", action.amount)
             }
             DisplayTransaction(tx, action.amount, isUnsynced = true)
         }
 
-        val combinedList = _fullHistory + pendingAsDisplay + _unsyncedTransactions.filter { unsynced ->
-            _fullHistory.none { it.tx.id == unsynced.tx.id }
+        val unsynced = _unsyncedTransactions.filter { candidate ->
+            _fullHistory.none { it.tx.id == candidate.tx.id }
         }
 
-        val uniqueList = combinedList.distinctBy { it.tx.id }
-        val filtered = uniqueList.filter { item ->
-            val tx = item.tx
-            val isMe = tx.author == currentId
-            val typeEnum = when (tx) {
-                is MintTransaction -> TxFilterType.MINT
-                is BurnTransaction -> TxFilterType.BURN
-                is SendTransaction -> if (isMe) TxFilterType.SEND else TxFilterType.RECEIVE
-                else -> null
-            }
-            if (typeEnum == null || !selectedTypes.contains(typeEnum)) return@filter false
-
-            if (shouldCheckPeer) {
-                val peerId = when (tx) {
-                    is SendTransaction -> if (isMe) tx.target else tx.author
-                    else -> tx.author
-                }
-                val peerName = getPeerName(peerId)?.lowercase() ?: ""
-                if (!peerId.lowercase().contains(rawQuery) && !peerName.contains(rawQuery)) return@filter false
-            }
-            true
-        }
-
-        when (sortField) {
-            SortField.AMOUNT -> {
-                if (sortAscending) filtered.sortedBy { getSignedAmount(it) }
-                else filtered.sortedByDescending { getSignedAmount(it) }
-            }
-            SortField.TYPE -> {
-                if (sortAscending) filtered.sortedBy { getSortableType(it) }
-                else filtered.sortedByDescending { getSortableType(it) }
-            }
-            SortField.NONE -> {
-                filtered.sortedWith(compareByDescending<DisplayTransaction> {
-                    if (it.isUnsynced) Long.MAX_VALUE else it.tx.timestamp
-                }.thenByDescending { it.tx.seq })
-            }
-        }
+        history.apply(
+            transactions = (_fullHistory + pending + unsynced).distinctBy { it.tx.id },
+            currentId = currentId,
+            peerName = ::getPeerName
+        )
     }
 
     private var cardPollingJob: Job? = null
@@ -144,54 +136,8 @@ class WalletViewModel(
         viewModelScope.launch {
             this@WalletViewModel.balance = balance
             try {
-                val dtoList = Json.decodeFromString<List<RustTxDto>>(historyJson)
-                val txList = mutableListOf<Transaction>()
-                val displayList = mutableListOf<DisplayTransaction>()
-
-                for (dto in dtoList) {
-                    val tx: Transaction? = when (dto.type) {
-                        "MINT" -> MintTransaction(
-                            id = dto.id,
-                            author = dto.author,
-                            timestamp = dto.timestamp,
-                            seq = dto.seq,
-                            signature = dto.signature,
-                            goc = dto.goc
-                        )
-                        "BURN" -> BurnTransaction(
-                            id = dto.id,
-                            author = dto.author,
-                            timestamp = dto.timestamp,
-                            seq = dto.seq,
-                            signature = dto.signature,
-                            goc = dto.goc
-                        )
-                        "SEND" -> SendTransaction(
-                            id = dto.id,
-                            author = dto.author,
-                            timestamp = dto.timestamp,
-                            seq = dto.seq,
-                            signature = dto.signature,
-                            target = dto.target,
-                            goc = dto.goc
-                        )
-                        "GENESIS" -> GenesisTransaction(
-                            id = dto.id,
-                            author = dto.author,
-                            timestamp = dto.timestamp,
-                            seq = dto.seq,
-                            signature = dto.signature,
-                            publicKey = dto.publicKey ?: dto.author,
-                            attachmentCertificate = dto.certificate?.let { CoreWrapper.hexToBytes(it) }
-                        )
-                        else -> null
-                    }
-
-                    if (tx != null) {
-                        txList.add(tx)
-                        displayList.add(DisplayTransaction(tx, dto.goc, false))
-                    }
-                }
+                val txList = LedgerJson.decodeFromString<List<Transaction>>(historyJson)
+                val displayList = txList.map { DisplayTransaction(it, it.amount, false) }
 
                 if (isFirstSync) {
                     isFirstSync = false
@@ -214,19 +160,148 @@ class WalletViewModel(
                 }.toSet().filter { it != currentId }
 
                 knownNetworkPeers = peerIds.map { peerId ->
-                    val name = accountRepo.getAccount(peerId)?.name ?: "User ...${peerId.takeLast(6)}"
+                    val name = accounts.getAccount(peerId)?.name ?: "User ...${peerId.takeLast(6)}"
                     PeerOption(peerId, name)
                 }
 
-                walletService?.syncIncomingWithCard(txList)
-            } catch (e: Exception) {
-                println("JSON Parse Error: ${e.message}")
+                val service = walletService
+                val unsyncedIds = service?.let { pushToCard(it, txList) } ?: unsyncedIdsFromStore(txList)
+                _unsyncedTransactions = displayList.flagUnsynced(unsyncedIds)
+                if (service != null && pendingActions.isEmpty()) card.completeSession()
+            } catch (_: Exception) {
             }
         }
     }
 
+    var globalHistory by mutableStateOf<List<DisplayTransaction>>(emptyList()); private set
+    var networkAccounts by mutableStateOf<List<NetworkAccountSummary>>(emptyList()); private set
+
+    private val observerListener: (Long, String) -> Unit = { _, historyJson ->
+        viewModelScope.launch {
+            try {
+                val txList = LedgerJson.decodeFromString<List<Transaction>>(historyJson)
+                val displayList = txList.map { DisplayTransaction(it, it.amount, false) }
+                val balances = LinkedHashMap<String, Long>()
+                val txCounts = HashMap<String, Int>()
+
+                for (tx in txList) {
+                    when (tx) {
+                        is MintTransaction -> balances[tx.author] = (balances[tx.author] ?: 0L) + tx.goc
+                        is BurnTransaction -> balances[tx.author] = (balances[tx.author] ?: 0L) - tx.goc
+                        is SendTransaction -> {
+                            balances[tx.author] = (balances[tx.author] ?: 0L) - tx.goc
+                            balances[tx.target] = (balances[tx.target] ?: 0L) + tx.goc
+                        }
+                        is GenesisTransaction -> balances.getOrPut(tx.author) { 0L }
+                    }
+                    if (tx !is GenesisTransaction) txCounts[tx.author] = (txCounts[tx.author] ?: 0) + 1
+                }
+
+                globalHistory = displayList
+                networkAccounts = balances.map { (id, bal) ->
+                    NetworkAccountSummary(
+                        id = id,
+                        name = getPeerName(id),
+                        balance = bal,
+                        txCount = txCounts[id] ?: 0
+                    )
+                }.sortedByDescending { it.balance }
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private inline fun <T> cardRead(fallback: T, read: () -> T): T =
+        try { read() } catch (_: Exception) { fallback }
+
+    private fun rememberCardPinEpoch(accountId: String) {
+        val epoch = cardRead(-1) { card.pinEpoch }
+        if (epoch >= 0) preferences.setKnownPinEpoch(accountId, epoch)
+    }
+
+    private suspend fun adoptCardPin(accountId: String, pin: String): Boolean = try {
+        val pinBytes = ProtocolSerializer.validateAndConvertPin(pin.toCharArray())
+        if (card.verifyPin(pinBytes)) {
+            accounts.changePin(accountId, pin)
+            rememberCardPinEpoch(accountId)
+            withContext(Dispatchers.Main) { isCardPinOutOfSync = false }
+            true
+        } else {
+            false
+        }
+    } catch (_: Exception) {
+        false
+    }
+
+    private fun List<DisplayTransaction>.flagUnsynced(ids: Set<String>) =
+        filter { it.tx.id in ids }.map { it.copy(isUnsynced = true) }
+
+    private fun unsyncedIdsFromStore(txList: List<Transaction>): Set<String> {
+        val id = currentId ?: return emptySet()
+        val lastReceived = cardSyncState.getLastReceived(id)
+        return unsyncedIncoming(txList, id, lastReceived).map { it.id }.toSet()
+    }
+
+    private suspend fun pushToCard(service: WalletService, txList: List<Transaction>): Set<String>? =
+        withContext(Dispatchers.IO) {
+            try {
+                service.syncIncomingWithCard(txList)
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+    private suspend fun readCardSeq(): Long? {
+        val service = walletService ?: return null
+        val state = withContext(Dispatchers.IO) { service.cardState() } ?: return null
+        cardBalance = state.balance
+        return state.seq
+    }
+
+    private fun markAttempt(id: String, cardSeq: Long) {
+        pendingActions = pendingActions.map {
+            if (it.id == id) it.copy(attemptedAtCardSeq = cardSeq) else it
+        }
+        savePending()
+    }
+
+    private fun syncIncomingNow() {
+        val service = walletService ?: return
+        viewModelScope.launch {
+            val ids = pushToCard(service, _fullHistory.map { it.tx }) ?: return@launch
+            _unsyncedTransactions = _fullHistory.flagUnsynced(ids)
+            readCardSeq()
+            if (pendingActions.isEmpty()) card.completeSession()
+        }
+    }
+
+    private fun startNetworkObserver() {
+        if (currentId != null) return
+        CoreWrapper.initLedger(observerListener, storagePath, "", "")
+    }
+
     init {
         startCardPolling()
+        startNetworkObserver()
+    }
+
+    fun onNetworkPermissionsGranted() = developer.onPermissionsGranted()
+
+    fun onBluetoothAvailabilityChanged(available: Boolean) = developer.onBluetoothAvailabilityChanged(available)
+
+    fun stopNetworkServices() = developer.stop()
+
+    private fun clearLedgerState() {
+        _fullHistory.clear()
+        sessionTransactions.clear()
+        _unsyncedTransactions = emptyList()
+        globalHistory = emptyList()
+        networkAccounts = emptyList()
+        knownNetworkPeers = emptyList()
+        balance = 0L
+        isFirstSync = true
+        CoreWrapper.shutdown()
+        startNetworkObserver()
     }
 
     fun selectAccountToLogin(acc: StoredAccount) {
@@ -239,36 +314,50 @@ class WalletViewModel(
         val acc = detectedAccount ?: return
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                if (accountRepo.verifyPin(acc.id, pin)) {
+                val cardPresent = isCardConnected && currentDetectedCardId == acc.id
+                val pinAccepted = if (isCardPinOutOfSync && cardPresent) {
+                    adoptCardPin(acc.id, pin)
+                } else {
+                    accounts.verifyPin(acc.id, pin)
+                }
+
+                if (pinAccepted) {
                     sessionPin = pin
 
-                    pendingActions = storage.getPendingActions(acc.id)
+                    pendingActions = cardSyncState.getPendingActions(acc.id)
 
                     var fullPubKeyHex: String? = null
-                    if (isCardConnected && currentDetectedCardId == acc.id) {
+                    if (cardPresent) {
                         fullPubKeyHex = try {
                             card.publicKey?.let { CoreWrapper.bytesToHex(it) }
                         } catch (_: Exception) { null }
+                        rememberCardPinEpoch(acc.id)
                     }
 
                     withContext(Dispatchers.Main) {
                         currentId = acc.id
                         currentName = acc.name
-                        isMinter = accountRepo.isMinter(acc.id)
+                        isMinter = accounts.isMinter(acc.id)
                         errorMessage = null
                         currentScreen = AppScreenState.DASHBOARD
                         
-                        ScreenCaptureProtection.setBlocked(storage.isScreenCaptureBlocked(acc.id))
+                        ScreenCaptureProtection.setBlocked(preferences.isScreenCaptureBlocked(acc.id))
 
                         if (isCardConnected && currentDetectedCardId == acc.id) {
-                            walletService = WalletService(card, pin, storage)
+                            walletService = WalletService(card, pin, cardSyncState)
                             processSyncQueue()
                         }
 
                         CoreWrapper.initLedger(rustListener, storagePath, acc.id, fullPubKeyHex ?: "")
                     }
                 } else {
-                    withContext(Dispatchers.Main) { errorMessage = "Invalid PIN" }
+                    withContext(Dispatchers.Main) {
+                        errorMessage = if (isCardPinOutOfSync) {
+                            "This card's PIN was changed on another device. Enter the current card PIN."
+                        } else {
+                            "Invalid PIN"
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { errorMessage = e.message ?: "Login failed" }
@@ -288,9 +377,8 @@ class WalletViewModel(
         _fullHistory.clear()
         sessionTransactions.clear()
         isFirstSync = true
-        isSearchMode = false
-        filterTypes.clear()
-        filterPeerQuery = ""
+        history.reset()
+        startNetworkObserver()
     }
 
     fun send(targetId: String, amount: Long) = executeAction(PendingAction(type = "SEND", amount = amount, targetId = targetId))
@@ -299,39 +387,87 @@ class WalletViewModel(
 
     private fun executeAction(action: PendingAction) {
         pendingActions = pendingActions + action
-        currentId?.let { storage.savePendingActions(it, pendingActions) }
+        currentId?.let { cardSyncState.savePendingActions(it, pendingActions) }
 
         if (walletService != null) processSyncQueue()
     }
 
-    private fun processSyncQueue() {
-        val ws = walletService ?: return
-        if (pendingActions.isEmpty()) return
+    private fun savePending() {
+        currentId?.let { cardSyncState.savePendingActions(it, pendingActions) }
+    }
 
-        viewModelScope.launch(Dispatchers.IO) {
-            val toProcess = pendingActions.toList()
-            for (action in toProcess) {
-                try {
-                    withContext(Dispatchers.Main) { syncStatus = "Processing..." }
-                    when (action.type) {
-                        "SEND" -> ws.send(action.targetId!!, action.amount, _fullHistory.map { it.tx })
-                        "MINT" -> ws.mint(action.amount)
-                        "BURN" -> ws.burn(action.amount)
+    private fun dropPending(id: String) {
+        pendingActions = pendingActions.filter { it.id != id }
+        savePending()
+    }
+
+    fun cancelPendingAction(id: String): Boolean {
+        if (processingActionId == id) return false
+        dropPending(id)
+        return true
+    }
+
+    fun updatePendingAction(id: String, amount: Long, targetId: String?): Boolean {
+        if (processingActionId == id) return false
+        pendingActions = pendingActions.map {
+            if (it.id == id) it.copy(amount = amount, targetId = targetId) else it
+        }
+        savePending()
+        return true
+    }
+
+    private fun runAction(ws: WalletService, action: PendingAction): String? = try {
+        when (action.type) {
+            "SEND" -> ws.send(action.targetId!!, action.amount, _fullHistory.map { it.tx })
+            "MINT" -> ws.mint(action.amount)
+            "BURN" -> ws.burn(action.amount)
+        }
+        null
+    } catch (e: Exception) {
+        e.message ?: e.typeName()
+    }
+
+    private fun processSyncQueue() {
+        if (walletService == null || pendingActions.isEmpty()) return
+
+        viewModelScope.launch {
+            queueMutex.withLock {
+                while (true) {
+                    val ws = walletService ?: break
+                    val action = pendingActions.firstOrNull() ?: break
+
+                    val cardSeq = readCardSeq()
+                    if (cardSeq == null) {
+                        syncStatus = null
+                        return@withLock
                     }
-                    withContext(Dispatchers.Main) {
-                        pendingActions = pendingActions.filter { it.id != action.id }
-                        currentId?.let { storage.savePendingActions(it, pendingActions) }
+
+                    val attempted = action.attemptedAtCardSeq
+                    if (attempted != null && cardSeq > attempted) {
+                        dropPending(action.id)
+                        errorMessage = "${action.type} reached the card but could not be recorded."
+                        continue
                     }
-                } catch (e: Exception) {
-                    withContext(Dispatchers.Main) {
-                        errorMessage = "Transaction failed: ${e.message}"
-                        pendingActions = pendingActions.filter { it.id != action.id }
-                        currentId?.let { storage.savePendingActions(it, pendingActions) }
+
+                    markAttempt(action.id, cardSeq)
+                    processingActionId = action.id
+                    syncStatus = "Processing..."
+
+                    val error = withContext(Dispatchers.IO) { runAction(ws, action) }
+                    processingActionId = null
+
+                    if (error != null) {
+                        syncStatus = null
+                        return@withLock
                     }
+
+                    dropPending(action.id)
+                    delay(200.milliseconds)
                 }
-                delay(200.milliseconds)
+                syncStatus = null
+                readCardSeq()
+                if (pendingActions.isEmpty()) card.completeSession()
             }
-            withContext(Dispatchers.Main) { syncStatus = null }
         }
     }
 
@@ -379,8 +515,7 @@ class WalletViewModel(
                         val certHex = CoreWrapper.bytesToHex(verified.certificate)
 
                         CoreWrapper.genesis(sigHex, certHex)
-                    } catch (e: Exception) {
-                        println("Genesis failed: ${e.message}")
+                    } catch (_: Exception) {
                     }
                 }
 
@@ -432,10 +567,11 @@ class WalletViewModel(
 
         val idHex = CoreWrapper.getPersonIdAsHex(pubKey)
         val fullPubKeyHex = CoreWrapper.bytesToHex(pubKey)
-        accountRepo.createAccount(idHex, name, pin)
+        accounts.createAccount(idHex, name, pin)
 
         val isCardMinter = try { card.isMinter } catch(_: Exception) { false }
-        accountRepo.setMinterStatus(idHex, isCardMinter)
+        accounts.setMinterStatus(idHex, isCardMinter)
+        rememberCardPinEpoch(idHex)
 
         withContext(Dispatchers.Main) {
             CoreWrapper.initLedger(rustListener, storagePath, idHex, fullPubKeyHex)
@@ -444,11 +580,14 @@ class WalletViewModel(
     }
 
     private suspend fun finishCardSetup(idHex: String, pin: String) = withContext(Dispatchers.Main) {
-        availableAccounts = accountRepo.getAllAccounts()
+        availableAccounts = accounts.getAllAccounts()
         isSetupLoading = false
         isSetupSuccessful = true
-        tempSetupAccount = accountRepo.getAccount(idHex)
+        tempSetupAccount = accounts.getAccount(idHex)
         tempSetupPin = pin
+        physicallyConnectedCardAccount = tempSetupAccount
+        isNewCardDetected = false
+        card.completeSession()
     }
 
     fun completeSetup(wantsBiometrics: Boolean = false) {
@@ -456,7 +595,7 @@ class WalletViewModel(
             val accountToLogin = tempSetupAccount!!
             detectedAccount = accountToLogin
 
-            storage.setBiometricsEnabled(accountToLogin.id, wantsBiometrics)
+            preferences.setBiometricsEnabled(accountToLogin.id, wantsBiometrics)
 
             attemptLogin(tempSetupPin!!)
         } else {
@@ -468,6 +607,8 @@ class WalletViewModel(
     }
 
     fun goToSettings() { currentScreen = AppScreenState.SETTINGS }
+
+    fun isPrivacySensitiveScreen(): Boolean = currentScreen == AppScreenState.DASHBOARD || currentScreen == AppScreenState.SETTINGS
     
     private var relockAccount: StoredAccount? = null
 
@@ -487,27 +628,56 @@ class WalletViewModel(
 
     fun isScreenCaptureBlocked(): Boolean {
         val id = currentId ?: return false
-        return storage.isScreenCaptureBlocked(id)
+        return preferences.isScreenCaptureBlocked(id)
     }
 
     fun setScreenCaptureBlocked(blocked: Boolean) {
         val id = currentId ?: return
-        storage.setScreenCaptureBlocked(id, blocked)
+        preferences.setScreenCaptureBlocked(id, blocked)
         ScreenCaptureProtection.setBlocked(blocked)
     }
 
-    fun isBiometricsEnabled(accountId: String) = storage.isBiometricsEnabled(accountId)
+    fun isBiometricsEnabled(accountId: String) = preferences.isBiometricsEnabled(accountId)
 
-    fun setBiometricsEnabled(accountId: String, enabled: Boolean) = storage.setBiometricsEnabled(accountId, enabled)
+    fun setBiometricsEnabled(accountId: String, enabled: Boolean) = preferences.setBiometricsEnabled(accountId, enabled)
 
     fun changeCardPin(newPin: String, onSuccess: () -> Unit, onError: () -> Unit) {
         isSettingsLoading = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                currentId?.let { accountRepo.changePin(it, newPin) }
-                withContext(Dispatchers.Main) { isSettingsLoading = false; onSuccess() }
-            } catch (_: Exception) {
-                withContext(Dispatchers.Main) { isSettingsLoading = false; onError() }
+                val id = currentId ?: throw IllegalStateException("No active account")
+                val activePin = sessionPin ?: throw IllegalStateException("Session PIN unavailable")
+
+                if (!card.probe()) throw IllegalStateException("Hold the card to your device to change its PIN")
+
+                val currentPinBytes = ProtocolSerializer.validateAndConvertPin(activePin.toCharArray())
+                if (!card.verifyPin(currentPinBytes)) {
+                    val left = try { card.pinRetries } catch (_: Exception) { -1 }
+                    throw IllegalStateException(
+                        if (left >= 0) "Card rejected the current PIN. $left attempts remaining." else "Card rejected the current PIN."
+                    )
+                }
+
+                val newPinBytes = ProtocolSerializer.validateAndConvertPin(newPin.toCharArray())
+                if (!card.changePin(newPinBytes)) throw IllegalStateException("Card rejected the new PIN")
+
+                accounts.changePin(id, newPin)
+                rememberCardPinEpoch(id)
+
+                withContext(Dispatchers.Main) {
+                    sessionPin = newPin
+                    isCardPinOutOfSync = false
+                    walletService = WalletService(card, newPin, cardSyncState)
+                    card.completeSession()
+                    isSettingsLoading = false
+                    onSuccess()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    isSettingsLoading = false
+                    errorMessage = e.message ?: "Could not change the card PIN"
+                    onError()
+                }
             }
         }
     }
@@ -515,9 +685,9 @@ class WalletViewModel(
     fun deleteCurrentAccount() {
         currentId?.let { uid ->
             viewModelScope.launch(Dispatchers.IO) {
-                accountRepo.deleteAccount(uid)
+                accounts.deleteAccount(uid)
                 withContext(Dispatchers.Main) {
-                    availableAccounts = accountRepo.getAllAccounts()
+                    availableAccounts = accounts.getAllAccounts()
                     logout()
                 }
             }
@@ -527,10 +697,10 @@ class WalletViewModel(
     fun updateAccountName(newName: String) {
         currentId?.let { uid ->
             viewModelScope.launch(Dispatchers.IO) {
-                accountRepo.updateAccountName(uid, newName)
+                accounts.updateAccountName(uid, newName)
                 withContext(Dispatchers.Main) {
                     currentName = newName
-                    availableAccounts = accountRepo.getAllAccounts()
+                    availableAccounts = accounts.getAllAccounts()
                 }
             }
         }
@@ -545,45 +715,10 @@ class WalletViewModel(
     fun dismissError() { errorMessage = null }
     fun getUnsyncedIncoming(): List<DisplayTransaction> = _unsyncedTransactions
 
+    fun getAccountName(id: String): String? = availableAccounts.find { it.id == id }?.name
+
     fun getPeerName(id: String): String? {
         return availableAccounts.find { it.id == id }?.name ?: knownNetworkPeers.find { it.id == id }?.label
-    }
-
-    fun toggleSearchMode() { isSearchMode = !isSearchMode }
-
-    fun toggleFilterType(type: TxFilterType) {
-        if (filterTypes.contains(type)) filterTypes.remove(type) else filterTypes.add(type)
-    }
-
-    fun cycleSort(field: SortField) {
-        if (sortField == field) {
-            if (!sortAscending) sortAscending = true
-            else { sortField = SortField.NONE; sortAscending = false }
-        } else {
-            sortField = field
-            sortAscending = false
-        }
-    }
-
-    private fun getSignedAmount(item: DisplayTransaction): Long {
-        val tx = item.tx
-        val isMe = tx.author == currentId
-        return when (tx) {
-            is BurnTransaction -> -item.delta
-            is SendTransaction -> if (isMe) -item.delta else item.delta
-            else -> item.delta
-        }
-    }
-
-    private fun getSortableType(item: DisplayTransaction): Int {
-        val tx = item.tx
-        val isMe = tx.author == currentId
-        return when (tx) {
-            is MintTransaction -> 1
-            is BurnTransaction -> 2
-            is SendTransaction -> if (isMe) 3 else 4
-            else -> 4
-        }
     }
 
     private fun startCardPolling() {
@@ -592,14 +727,14 @@ class WalletViewModel(
             while (isActive) {
                 try {
                     if (!isSetupLoading) {
-                        if (!card.isConnected) card.connect()
-                        val retries = try { card.pinRetries } catch(_:Exception) { 3 }
-                        if (retries == 0) throw Exception("Bricked")
+                        if (!card.probe()) throw Exception("Card not reachable")
+                        if (cardRead(3) { card.pinRetries } == 0) throw Exception("Bricked")
 
                         val pubKey = card.publicKey ?: throw Exception()
                         val idHex = CoreWrapper.getPersonIdAsHex(pubKey)
-                        val account = accountRepo.getAccount(idHex)
-                        val isPinSet = try { card.isPinSet } catch (_: Exception) { false }
+                        val account = accounts.getAccount(idHex)
+                        val isPinSet = cardRead(false) { card.isPinSet }
+                        val epoch = cardRead(-1) { card.pinEpoch }
 
                         withContext(Dispatchers.Main) {
                             isCardConnected = true
@@ -608,9 +743,15 @@ class WalletViewModel(
                             isNewCardDetected = account == null
                             newCardHasPin = isPinSet
 
+                            if (account != null && epoch >= 0) {
+                                val known = preferences.getKnownPinEpoch(account.id)
+                                isCardPinOutOfSync = known >= 0 && known != epoch
+                            }
+
                             if (currentScreen == AppScreenState.DASHBOARD && currentId == idHex && walletService == null && sessionPin != null) {
-                                walletService = WalletService(card, sessionPin!!, storage)
+                                walletService = WalletService(card, sessionPin!!, cardSyncState)
                                 processSyncQueue()
+                                syncIncomingNow()
                             }
                         }
                     }
@@ -618,12 +759,10 @@ class WalletViewModel(
                     withContext(Dispatchers.Main) {
                         if (isCardConnected) {
                             isCardConnected = false
+                            cardBalance = null
                             walletService?.close()
                             walletService = null
                         }
-                        currentDetectedCardId = null
-                        physicallyConnectedCardAccount = null
-                        isNewCardDetected = false
                     }
                     try { card.disconnect() } catch (_: Exception) {}
                 }

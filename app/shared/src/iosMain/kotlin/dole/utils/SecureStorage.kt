@@ -7,78 +7,157 @@ import platform.CoreFoundation.*
 import platform.Foundation.*
 import platform.Security.*
 
-@OptIn(ExperimentalForeignApi::class)
+@OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
 class IosSecureStorage : SecureStorage {
 
     override val isBiometricSupported: Boolean = true
 
     override fun hasSavedPin(accountId: String): Boolean {
-        val query = mutableMapOf<Any?, Any?>(
-            kSecClass to kSecClassGenericPassword,
-            kSecAttrAccount to accountId,
-            kSecReturnData to kCFBooleanFalse
-        )
-        val status = SecItemCopyMatching(query as CFDictionaryRef, null)
-        return status == errSecSuccess
+        val account = CFBridgingRetain(accountId)
+        try {
+            val status = withKeychainQuery(
+                mapOf(
+                    kSecClass to kSecClassGenericPassword,
+                    kSecAttrAccount to account,
+                    kSecReturnData to kCFBooleanFalse
+                )
+            ) { SecItemCopyMatching(it, null) }
+            return status == errSecSuccess
+        } finally {
+            CFBridgingRelease(account)
+        }
     }
 
     override suspend fun savePinSecurely(accountId: String, pin: String) {
+        val pinData = CFBridgingRetain(pin.toNSData())
+        val account = CFBridgingRetain(accountId)
+        val bioAccount = CFBridgingRetain(accountId + BIO_SUFFIX)
         val accessControl = SecAccessControlCreateWithFlags(
             kCFAllocatorDefault,
             kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
             kSecAccessControlBiometryAny,
             null
         )
-        val pinData = (pin as NSString).dataUsingEncoding(NSUTF8StringEncoding)
-        val query = mutableMapOf<Any?, Any?>(
-            kSecClass to kSecClassGenericPassword,
-            kSecAttrAccount to accountId,
-            kSecValueData to pinData,
-            kSecAttrAccessControl to accessControl
-        )
+        try {
+            withKeychainQuery(
+                mapOf(
+                    kSecClass to kSecClassGenericPassword,
+                    kSecAttrAccount to account
+                )
+            ) { SecItemDelete(it) }
+            withKeychainQuery(
+                mapOf(
+                    kSecClass to kSecClassGenericPassword,
+                    kSecAttrAccount to account,
+                    kSecValueData to pinData,
+                    kSecAttrAccessible to kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+                )
+            ) { SecItemAdd(it, null) }
 
-        SecItemDelete(query as CFDictionaryRef)
-        SecItemAdd(query as CFDictionaryRef, null)
+            if (accessControl != null) {
+                withKeychainQuery(
+                    mapOf(
+                        kSecClass to kSecClassGenericPassword,
+                        kSecAttrAccount to bioAccount
+                    )
+                ) { SecItemDelete(it) }
+                withKeychainQuery(
+                    mapOf(
+                        kSecClass to kSecClassGenericPassword,
+                        kSecAttrAccount to bioAccount,
+                        kSecValueData to pinData,
+                        kSecAttrAccessControl to accessControl
+                    )
+                ) { SecItemAdd(it, null) }
+            }
+        } finally {
+            accessControl?.let { CFRelease(it) }
+            CFBridgingRelease(bioAccount)
+            CFBridgingRelease(account)
+            CFBridgingRelease(pinData)
+        }
     }
 
-    override suspend fun getPinSecurely(accountId: String): String? {
-        return getPin(accountId, promptTitle = null)
-    }
+    override suspend fun getPinSecurely(accountId: String): String? = getPin(accountId, promptTitle = null)
 
-    override suspend fun getPinWithBiometrics(accountId: String): String? {
-        return getPin(accountId, promptTitle = "Login to Dole Wallet")
-    }
+    override suspend fun getPinWithBiometrics(accountId: String): String? = getPin(accountId + BIO_SUFFIX, promptTitle = "Login to Dole Wallet")
 
     override suspend fun deletePinSecurely(accountId: String) {
-        val query = mutableMapOf<Any?, Any?>(
-            kSecClass to kSecClassGenericPassword,
-            kSecAttrAccount to accountId
-        )
-        SecItemDelete(query as CFDictionaryRef)
+        listOf(accountId, accountId + BIO_SUFFIX).forEach { acc ->
+            val account = CFBridgingRetain(acc)
+            try {
+                withKeychainQuery(
+                    mapOf(
+                        kSecClass to kSecClassGenericPassword,
+                        kSecAttrAccount to account
+                    )
+                ) { SecItemDelete(it) }
+            } finally {
+                CFBridgingRelease(account)
+            }
+        }
     }
 
-    private fun getPin(accountId: String, promptTitle: String?): String? {
-        val query = mutableMapOf<Any?, Any?>(
-            kSecClass to kSecClassGenericPassword,
-            kSecAttrAccount to accountId,
-            kSecReturnData to kCFBooleanTrue,
-            kSecMatchLimit to kSecMatchLimitOne
-        )
-        if (promptTitle != null) query[kSecUseOperationPrompt] = promptTitle
+    private fun getPin(account: String, promptTitle: String?): String? {
+        val accountRef = CFBridgingRetain(account)
+        val prompt = promptTitle?.let { CFBridgingRetain(it) }
+        try {
+            val entries = mutableMapOf<CFStringRef?, CFTypeRef?>(
+                kSecClass to kSecClassGenericPassword,
+                kSecAttrAccount to accountRef,
+                kSecReturnData to kCFBooleanTrue,
+                kSecMatchLimit to kSecMatchLimitOne
+            )
+            if (prompt != null) entries[kSecUseOperationPrompt] = prompt
 
-        var result: CFTypeRef? = null
-        val status = memScoped {
-            val resultPtr = alloc<CFTypeRefVar>()
-            val secStatus = SecItemCopyMatching(query as CFDictionaryRef, resultPtr.ptr)
-            result = resultPtr.value
-            secStatus
+            return memScoped {
+                val resultPtr = alloc<CFTypeRefVar>()
+                val status = withKeychainQuery(entries) { SecItemCopyMatching(it, resultPtr.ptr) }
+                if (status == errSecSuccess) {
+                    (CFBridgingRelease(resultPtr.value) as? NSData)?.toKString()
+                } else {
+                    null
+                }
+            }
+        } finally {
+            prompt?.let { CFBridgingRelease(it) }
+            CFBridgingRelease(accountRef)
         }
+    }
 
-        if (status == errSecSuccess && result != null) {
-            val data = result as NSData
-            return NSString.create(data, NSUTF8StringEncoding) as String
+    private fun <T> withKeychainQuery(
+        entries: Map<CFStringRef?, CFTypeRef?>,
+        block: (CFDictionaryRef) -> T
+    ): T {
+        val dict = CFDictionaryCreateMutable(kCFAllocatorDefault, entries.size.convert(), null, null)
+            ?: throw IllegalStateException("Unable to allocate keychain query")
+        try {
+            for ((key, value) in entries) {
+                CFDictionaryAddValue(dict, key, value)
+            }
+            return block(dict)
+        } finally {
+            CFRelease(dict)
         }
-        return null
+    }
+
+    private fun String.toNSData(): NSData {
+        val bytes = this.encodeToByteArray()
+        if (bytes.isEmpty()) return NSData()
+        return bytes.usePinned { pinned ->
+            NSData.create(bytes = pinned.addressOf(0), length = bytes.size.convert())
+        }
+    }
+
+    private fun NSData.toKString(): String? {
+        val len = this.length.toInt()
+        if (len == 0) return ""
+        val ptr = this.bytes ?: return null
+        return ptr.readBytes(len).decodeToString()
+    }
+
+    private companion object {
+        const val BIO_SUFFIX = ".bio"
     }
 }
 

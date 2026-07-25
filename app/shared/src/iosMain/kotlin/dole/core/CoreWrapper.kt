@@ -1,76 +1,111 @@
 package dole.core
 
-var swiftStartGlobalSyncAction: ((String) -> Unit)? = null
-var swiftStopGlobalSyncAction: (() -> Unit)? = null
-var swiftInitAction: (((Long, String) -> Unit, String, String, String) -> Unit)? = null
-var swiftShutdownAction: (() -> Unit)? = null
-var swiftGenesisAction: ((String, String) -> Unit)? = null
-var swiftMintAction: ((Long, Long, String) -> Unit)? = null
-var swiftBurnAction: ((Long, Long, String) -> Unit)? = null
-var swiftSendAction: ((String, Long, Long, String) -> Unit)? = null
+import dole.viewmodel.PeerConnection
+import dole.viewmodel.TransportStatus
 
-var swiftBytesToHexAction: ((ByteArray) -> String)? = null
-var swiftHexToBytesAction: ((String) -> ByteArray)? = null
-var swiftGetPersonIdAsHexAction: ((ByteArray) -> String)? = null
-var swiftVerifyCardCertificateAction: ((ByteArray, ByteArray) -> Boolean)? = null
-var swiftStartBleAdvertisingAction: ((String) -> Boolean)? = null
-var swiftStopBleAdvertisingAction: (() -> Unit)? = null
+interface IosCore {
+	fun startGlobalSync(storagePath: String)
+	fun stopGlobalSync()
+	fun initLedger(onStateUpdated: (Long, String) -> Unit, storagePath: String, publicKeyId: String, publicKeyFull: String)
+	fun shutdown()
+	fun resetLedger(storagePath: String): Boolean
+	fun genesis(sigHex: String, certHex: String)
+	fun mint(goc: Long, seq: Long, sigHex: String): Boolean
+	fun burn(goc: Long, seq: Long, sigHex: String): Boolean
+	fun send(targetPubKey: String, goc: Long, seq: Long, sigHex: String): Boolean
+	fun bytesToHex(bytes: ByteArray): String
+	fun hexToBytes(s: String): ByteArray
+	fun getPersonIdAsHex(pubKey: ByteArray): String
+	fun verifyCardCertificate(pubKey: ByteArray, cert: ByteArray): Boolean
+	fun startBleAdvertising(storagePath: String): Boolean
+	fun stopBleAdvertising()
+	fun setInternetEnabled(enabled: Boolean)
+	fun setIrohEnabled(enabled: Boolean)
+	fun connectedPeers(): List<PeerConnection>
+	fun transportStatus(): TransportStatus
+}
+
+private var iosCore: IosCore? = null
+
+fun installIosCore(core: IosCore) {
+	iosCore = core
+}
 
 actual object CoreWrapper {
 
 	actual fun startGlobalSync(storagePath: String) {
-		swiftStartGlobalSyncAction?.invoke(storagePath)
+		iosCore?.startGlobalSync(storagePath)
 	}
 
 	actual fun stopGlobalSync() {
-		swiftStopGlobalSyncAction?.invoke()
+		iosCore?.stopGlobalSync()
 	}
 
 	actual fun initLedger(onStateUpdated: (Long, String) -> Unit, storagePath: String, publicKeyId: String, publicKeyFull: String) {
-		swiftInitAction?.invoke(onStateUpdated, storagePath, publicKeyId, publicKeyFull)
+		iosCore?.initLedger(onStateUpdated, storagePath, publicKeyId, publicKeyFull)
 	}
 
 	actual fun shutdown() {
-		swiftShutdownAction?.invoke()
+		iosCore?.shutdown()
+	}
+
+	actual fun resetLedger(storagePath: String): Boolean {
+		return iosCore?.resetLedger(storagePath) ?: false
 	}
 
 	actual fun genesis(sigHex: String, certHex: String) {
-		swiftGenesisAction?.invoke(sigHex, certHex)
+		iosCore?.genesis(sigHex, certHex)
 	}
 
-	actual fun mint(amount: Long, seq: Long, sigHex: String) {
-		swiftMintAction?.invoke(amount, seq, sigHex)
+	actual fun mint(goc: Long, seq: Long, sigHex: String): Boolean {
+		return iosCore?.mint(goc, seq, sigHex) ?: false
 	}
 
-	actual fun burn(amount: Long, seq: Long, sigHex: String) {
-		swiftBurnAction?.invoke(amount, seq, sigHex)
+	actual fun burn(goc: Long, seq: Long, sigHex: String): Boolean {
+		return iosCore?.burn(goc, seq, sigHex) ?: false
 	}
 
-	actual fun send(targetPubKey: String, amount: Long, seq: Long, sigHex: String) {
-		swiftSendAction?.invoke(targetPubKey, amount, seq, sigHex)
+	actual fun send(targetPubKey: String, goc: Long, seq: Long, sigHex: String): Boolean {
+		return iosCore?.send(targetPubKey, goc, seq, sigHex) ?: false
 	}
 
 	actual fun bytesToHex(bytes: ByteArray): String {
-		return swiftBytesToHexAction?.invoke(bytes) ?: ""
+		return iosCore?.bytesToHex(bytes) ?: ""
 	}
 
 	actual fun hexToBytes(s: String): ByteArray {
-		return swiftHexToBytesAction?.invoke(s) ?: ByteArray(0)
+		return iosCore?.hexToBytes(s) ?: ByteArray(0)
 	}
 
 	actual fun getPersonIdAsHex(pubKey: ByteArray): String {
-		return swiftGetPersonIdAsHexAction?.invoke(pubKey) ?: ""
+		return iosCore?.getPersonIdAsHex(pubKey) ?: ""
 	}
 
 	actual fun verifyCardCertificate(pubKey: ByteArray, cert: ByteArray): Boolean {
-		return swiftVerifyCardCertificateAction?.invoke(pubKey, cert) ?: false
+		return iosCore?.verifyCardCertificate(pubKey, cert) ?: false
 	}
 
 	actual fun startBleAdvertising(storagePath: String): Boolean {
-		return swiftStartBleAdvertisingAction?.invoke(storagePath) ?: false
+		return iosCore?.startBleAdvertising(storagePath) ?: false
 	}
 
 	actual fun stopBleAdvertising() {
-		swiftStopBleAdvertisingAction?.invoke()
+		iosCore?.stopBleAdvertising()
+	}
+
+	actual fun setInternetEnabled(enabled: Boolean) {
+		iosCore?.setInternetEnabled(enabled)
+	}
+
+	actual fun setIrohEnabled(enabled: Boolean) {
+		iosCore?.setIrohEnabled(enabled)
+	}
+
+	actual fun connectedPeers(): List<PeerConnection> {
+		return iosCore?.connectedPeers() ?: emptyList()
+	}
+
+	actual fun transportStatus(): TransportStatus {
+		return iosCore?.transportStatus() ?: TransportStatus(false, false, false)
 	}
 }

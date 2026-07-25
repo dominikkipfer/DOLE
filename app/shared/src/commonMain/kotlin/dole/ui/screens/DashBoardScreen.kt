@@ -1,8 +1,8 @@
 package dole.ui.screens
 
 import androidx.compose.animation.AnimatedVisibilityScope
-import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationState
 import androidx.compose.animation.core.animateDecay
 import androidx.compose.animation.core.animateFloatAsState
@@ -11,13 +11,12 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -54,10 +53,11 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Remove
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.UnfoldMore
 import androidx.compose.material3.Card
@@ -65,10 +65,10 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -86,16 +86,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -108,11 +112,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.zIndex
+import com.mohamedrejeb.calf.ui.button.AdaptiveIconButton
+import com.mohamedrejeb.calf.ui.gesture.adaptiveClickable
+import com.mohamedrejeb.calf.ui.sheet.AdaptiveBottomSheet
+import com.mohamedrejeb.calf.ui.sheet.rememberAdaptiveSheetState
 import dole.data.models.BurnTransaction
 import dole.data.models.GenesisTransaction
 import dole.data.models.MintTransaction
@@ -120,10 +129,17 @@ import dole.data.models.SendTransaction
 import dole.data.models.StoredAccount
 import dole.ui.components.AppBackHandler
 import dole.ui.components.AppButton
+import dole.ui.components.SegmentedTabs
 import dole.ui.components.WalletCard
 import dole.ui.components.AppTextField
+import dole.ui.components.TransactionAmount
+import dole.ui.components.TransactionPeerSubtitle
+import dole.ui.components.EntryRow
+import dole.ui.components.formatTransactionTimestamp
 import dole.ui.layouts.BoardLayout
 import dole.ui.modifiers.sharedCardEffect
+import dole.ui.theme.DoleBlue
+import dole.ui.theme.LocalIsDarkTheme
 import dole.utils.rememberAppClipboard
 import dole.viewmodel.DisplayTransaction
 import dole.viewmodel.PeerOption
@@ -131,13 +147,12 @@ import dole.viewmodel.PendingAction
 import dole.viewmodel.SortField
 import dole.viewmodel.TxFilterType
 import dole.viewmodel.WalletViewModel
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.roundToInt
+import kotlin.time.Duration.Companion.milliseconds
 
-@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun DashboardScreen(
 	viewModel: WalletViewModel,
@@ -166,7 +181,7 @@ fun DashboardScreen(
 	}
 
 	val backgroundColor = MaterialTheme.colorScheme.background
-	val isDarkTheme = isSystemInDarkTheme()
+	val isDarkTheme = LocalIsDarkTheme.current
 
 	BoxWithConstraints(modifier = Modifier.fillMaxSize().background(backgroundColor)) {
 		val screenMaxWidth = maxWidth
@@ -202,8 +217,7 @@ fun DashboardScreen(
 		val minScrollHeaderPx = density.run { scrollLimitHeaderHeight.toPx() }
 		val scrollRange = maxHeaderPx - minScrollHeaderPx
 
-		val isDragged by listState.interactionSource.collectIsDraggedAsState()
-		var isSnapping by remember { mutableStateOf(false) }
+		var isUserDragging by remember { mutableStateOf(false) }
 
 		val isAtTop by remember {
 			derivedStateOf { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 }
@@ -211,16 +225,17 @@ fun DashboardScreen(
 
 		if (!isWideLayout) {
 			LaunchedEffect(listState, scrollRange) {
-				snapshotFlow { listState.isScrollInProgress || isDragged || isSnapping }
-					.distinctUntilChanged().filter { !it }.collect {
-						val currentOffset = listState.firstVisibleItemScrollOffset
-						val rangeInt = scrollRange.toInt()
-						if (listState.firstVisibleItemIndex == 0 && currentOffset > 10 && currentOffset < rangeInt - 10) {
-							isSnapping = true
-							try {
-								if (currentOffset < rangeInt / 2) listState.animateScrollToItem(0, 0)
-								else listState.animateScrollToItem(0, rangeInt)
-							} finally { isSnapping = false }
+				snapshotFlow { listState.isScrollInProgress || isUserDragging }
+					.collect { active ->
+						if (active) return@collect
+						delay(140.milliseconds)
+						if (listState.isScrollInProgress || isUserDragging) return@collect
+						if (listState.firstVisibleItemIndex != 0) return@collect
+						val range = scrollRange.toInt()
+						if (range <= 0) return@collect
+						val offset = listState.firstVisibleItemScrollOffset
+						if (offset in 1 until range) {
+							listState.animateScrollToItem(0, if (offset < range / 2) 0 else range)
 						}
 					}
 			}
@@ -284,9 +299,13 @@ fun DashboardScreen(
 						}
 						Spacer(Modifier.height(spacerHeight))
 						Column(horizontalAlignment = Alignment.CenterHorizontally) {
-							Text("Card Balance", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f))
 							Text(
-								"DM ${viewModel.balance}",
+								"Card Balance",
+								style = MaterialTheme.typography.labelMedium,
+								color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+							)
+							Text(
+								"DM ${viewModel.displayBalance}",
 								style = if (isCompactHeight) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.headlineLarge,
 								fontWeight = FontWeight.Bold,
 								color = MaterialTheme.colorScheme.onBackground.copy(alpha = if (viewModel.isBalancePending) 0.5f else 1.0f)
@@ -387,7 +406,7 @@ fun DashboardScreen(
 									color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
 								)
 								Text(
-									"DM ${viewModel.balance}",
+									"DM ${viewModel.displayBalance}",
 									style = MaterialTheme.typography.headlineMedium.copy(fontSize = currentFontSize, fontWeight = FontWeight.Bold, lineHeight = currentFontSize),
 									color = MaterialTheme.colorScheme.onBackground.copy(alpha = if (viewModel.isBalancePending) 0.5f else 1.0f)
 								)
@@ -436,19 +455,20 @@ fun DashboardScreen(
 
 						Box(modifier = Modifier.offset(x = currentLogoutX, y = currentLogoutY).width(currentLogoutSize).zIndex(3f)) {
 							Column(horizontalAlignment = Alignment.CenterHorizontally) {
-								Surface(
-									modifier = Modifier.size(currentLogoutSize).clip(CircleShape).clickable { viewModel.logout() },
-									shape = CircleShape,
-									color = MaterialTheme.colorScheme.surface,
-									shadowElevation = 2.dp
+								Box(
+									modifier = Modifier
+										.size(currentLogoutSize)
+										.shadow(2.dp, CircleShape)
+										.clip(CircleShape)
+										.background(MaterialTheme.colorScheme.surface)
+										.adaptiveClickable(shape = CircleShape) { viewModel.logout() },
+									contentAlignment = Alignment.Center
 								) {
-									Box(contentAlignment = Alignment.Center) {
-										Icon(
-											Icons.Default.Close, "Logout",
-											tint = MaterialTheme.colorScheme.onSurfaceVariant,
-											modifier = Modifier.size(currentLogoutSize * 0.4f)
-										)
-									}
+									Icon(
+										Icons.Default.Close, "Logout",
+										tint = MaterialTheme.colorScheme.onSurfaceVariant,
+										modifier = Modifier.size(currentLogoutSize * 0.4f)
+									)
 								}
 								if (textAlpha > 0.1f) {
 									Spacer(Modifier.height(4.dp))
@@ -466,7 +486,7 @@ fun DashboardScreen(
 			},
 			secondaryContent = {
 				Box(
-					modifier = Modifier.fillMaxSize().background(if(isWideLayout) MaterialTheme.colorScheme.surface else Color.Transparent).padding(horizontal = if (isWideLayout) 16.dp else 0.dp)
+					modifier = Modifier.fillMaxSize().padding(horizontal = if (isWideLayout) 16.dp else 0.dp)
 				) {
 					val listSpacerHeight = if (isWideLayout) null else (effectiveMaxHeaderHeight - 8.dp)
 
@@ -477,9 +497,11 @@ fun DashboardScreen(
 						listState = listState,
 						topPadding = listSpacerHeight,
 						minHeaderHeight = scrollLimitHeaderHeight,
+						headerScrollRange = effectiveMaxHeaderHeight - scrollLimitHeaderHeight,
 						screenHeight = screenMaxHeight,
 						isWideLayout = isWideLayout,
-						onCopy = { copyToClipboard(it) }
+						onCopy = { copyToClipboard(it) },
+						onDragActiveChange = { isUserDragging = it }
 					)
 				}
 			}
@@ -506,9 +528,11 @@ fun TransactionDashboardList(
 	listState: LazyListState,
 	topPadding: Dp?,
 	minHeaderHeight: Dp,
+	headerScrollRange: Dp,
 	screenHeight: Dp,
 	isWideLayout: Boolean,
-	onCopy: (String) -> Unit
+	onCopy: (String) -> Unit,
+	onDragActiveChange: (Boolean) -> Unit
 ) {
 	val density = LocalDensity.current
 	val coroutineScope = rememberCoroutineScope()
@@ -516,42 +540,47 @@ fun TransactionDashboardList(
 	val itemSpacing = 8.dp
 	val bottomPad = 16.dp
 
+	var editingAction by remember { mutableStateOf<PendingAction?>(null) }
+
 	val draggableState = rememberDraggableState { delta -> listState.dispatchRawDelta(-delta) }
 
-	LaunchedEffect(listState, topPadding, screenHeight, minHeaderHeight, pendingActions.size, unsyncedTxs.size, viewModel.filteredHistory.size, isWideLayout) {
+	LaunchedEffect(listState, topPadding, screenHeight, minHeaderHeight, headerScrollRange, pendingActions.size, unsyncedTxs.size, viewModel.filteredHistory.size, isWideLayout) {
 		if (isWideLayout || topPadding == null) {
 			spacerHeight = 0.dp
 			return@LaunchedEffect
 		}
 
-		snapshotFlow { listState.layoutInfo }
-			.collectLatest { layoutInfo ->
-				val totalItems = layoutInfo.totalItemsCount
-				if (totalItems <= 2) {
-					val minHeaderPx = with(density) { minHeaderHeight.toPx() }
-					val screenHeightPx = with(density) { screenHeight.toPx() }
-					spacerHeight = with(density) { (screenHeightPx - minHeaderPx).toDp() }.coerceAtLeast(0.dp)
-				} else {
-					val visibleItems = layoutInfo.visibleItemsInfo
-					val bottomSpacerIndex = totalItems - 1
-					val realItems = visibleItems.filter { it.index in 1 until bottomSpacerIndex }
+		snapshotFlow { listState.isScrollInProgress to listState.layoutInfo.totalItemsCount }
+			.collect { (scrolling, totalItems) ->
+				if (scrolling) return@collect
+				if (listState.firstVisibleItemIndex != 0) return@collect
 
-					if (realItems.isNotEmpty()) {
-						val contentHeightPx = realItems.sumOf { it.size }
-						val itemSpacingPx = with(density) { itemSpacing.toPx() }
-						val realContentHeightPx = contentHeightPx + (realItems.size * itemSpacingPx)
+				val visibleItems = listState.layoutInfo.visibleItemsInfo
+				if (visibleItems.isEmpty() || totalItems == 0) return@collect
 
-						val minHeaderPx = with(density) { minHeaderHeight.toPx() }
-						val screenHeightPx = with(density) { screenHeight.toPx() }
-						val bottomPadPx = with(density) { bottomPad.toPx() }
-
-						val targetVisibleAreaPx = screenHeightPx - minHeaderPx
-						val missingPx = targetVisibleAreaPx - realContentHeightPx - bottomPadPx
-
-						val newHeight = if (missingPx > 0) with(density) { missingPx.toDp() } else 0.dp
-						if (abs(newHeight.value - spacerHeight.value) > 1f) spacerHeight = newHeight
-					}
+				if (visibleItems.last().index < totalItems - 1) {
+					if (spacerHeight != 0.dp) spacerHeight = 0.dp
+					return@collect
 				}
+
+				val realItems = visibleItems.filter { it.key != "top-spacer" && it.key != "bottom-spacer" }
+				if (realItems.isEmpty()) return@collect
+
+				val itemSpacingPx = with(density) { itemSpacing.toPx() }
+				val realContentPx = realItems.sumOf { it.size }.toFloat() + realItems.size * itemSpacingPx
+
+				val screenHeightPx = with(density) { screenHeight.toPx() }
+				val minHeaderPx = with(density) { minHeaderHeight.toPx() }
+				val topSpacerPx = with(density) { topPadding.toPx() }
+				val bottomPadPx = with(density) { bottomPad.toPx() }
+				val scrollRangePx = with(density) { headerScrollRange.toPx() }
+
+				val forCollapsePx = scrollRangePx + screenHeightPx - topSpacerPx - realContentPx
+				val forFillPx = screenHeightPx - minHeaderPx - realContentPx - bottomPadPx
+				val targetPx = maxOf(forCollapsePx, forFillPx, 0f)
+
+				val newHeight = with(density) { targetPx.toDp() }
+				if (abs(newHeight.value - spacerHeight.value) > 1f) spacerHeight = newHeight
 			}
 	}
 
@@ -566,7 +595,7 @@ fun TransactionDashboardList(
 	}
 
 	val myId = viewModel.currentId ?: ""
-	val isSearchMode = viewModel.isSearchMode
+	val isSearchMode = viewModel.history.isSearchMode
 	val hasPending = pendingActions.isNotEmpty() || safeUnsyncedTxs.isNotEmpty()
 
 	LazyColumn(
@@ -576,7 +605,9 @@ fun TransactionDashboardList(
 			.draggable(
 				state = draggableState,
 				orientation = Orientation.Vertical,
+				onDragStarted = { onDragActiveChange(true) },
 				onDragStopped = { velocity ->
+					onDragActiveChange(false)
 					coroutineScope.launch {
 						listState.scroll {
 							var lastValue = 0f
@@ -596,101 +627,89 @@ fun TransactionDashboardList(
 		verticalArrangement = Arrangement.spacedBy(itemSpacing),
 		userScrollEnabled = true
 	) {
-		item {
+		item(key = "top-spacer") {
 			if (topPadding != null) Spacer(Modifier.height(topPadding))
 		}
 
 		item {
-			Row(
+			SegmentedTabs(
+				options = listOf("Recent", "History"),
+				selectedIndex = if (isSearchMode) 1 else 0,
+				onSelected = { viewModel.history.showAllTransactions(it == 1) },
 				modifier = Modifier
 					.fillMaxWidth()
 					.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)
-					.background(Color.Transparent),
-				horizontalArrangement = Arrangement.SpaceBetween,
-				verticalAlignment = Alignment.CenterVertically
-			) {
-				Text(
-					text = if (isSearchMode) "Search History" else "Latest Transactions",
-					style = MaterialTheme.typography.titleLarge,
-					fontWeight = FontWeight.Bold,
-					color = MaterialTheme.colorScheme.onBackground
-				)
-
-				Surface(
-					onClick = { viewModel.toggleSearchMode() },
-					modifier = Modifier.size(36.dp).clip(CircleShape),
-					shape = CircleShape,
-					color = MaterialTheme.colorScheme.surfaceVariant
-				) {
-					Box(contentAlignment = Alignment.Center) {
-						Icon(
-							imageVector = if (isSearchMode) Icons.Default.Close else Icons.Default.Search,
-							contentDescription = "Toggle Search",
-							tint = MaterialTheme.colorScheme.onSurfaceVariant,
-							modifier = Modifier.size(20.dp)
-						)
-					}
-				}
-			}
+					.height(44.dp)
+			)
 		}
 
 		if (isSearchMode) {
-			item {
-				val cardColor = if (isWideLayout) MaterialTheme.colorScheme.surface else Color.Transparent
-				val inputColor = if (isWideLayout) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface
-
-				Box(Modifier.padding(horizontal = 16.dp)) {
+			item(key = "filter-section") {
+				Box(Modifier.animateItem().padding(horizontal = 16.dp)) {
 					FilterSection(
 						viewModel = viewModel,
 						screenHeight = screenHeight,
-						backgroundColor = cardColor,
-						inputBackgroundColor = inputColor
+						backgroundColor = Color.Transparent,
+						inputBackgroundColor = MaterialTheme.colorScheme.surface
 					)
 				}
 			}
-			item {
-				SortHeaderRow(
-					sortField = viewModel.sortField,
-					isAscending = viewModel.sortAscending,
-					onSortType = { viewModel.cycleSort(
-						SortField.TYPE) },
-					onSortAmount = { viewModel.cycleSort(
-						SortField.AMOUNT) }
-				)
+			item(key = "sort-header") {
+				Box(Modifier.animateItem()) {
+					SortHeaderRow(
+						sortField = viewModel.history.sortField,
+						isAscending = viewModel.history.sortAscending,
+						onSortType = { viewModel.history.cycleSort(
+							SortField.TYPE) },
+						onSortAmount = { viewModel.history.cycleSort(
+							SortField.AMOUNT) }
+					)
+				}
 			}
 			if (searchList.isEmpty()) {
-				item { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { Text("No results found.", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+				item(key = "empty-history") { Box(Modifier.animateItem().fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { Text("No results found.", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
 			} else {
 				items(searchList, key = { "search-${it.tx.id}" }) { item ->
-					Box(Modifier.padding(horizontal = 16.dp)) {
-						TransactionRow(item, myId, isPending = item.isUnsynced, onCopy = onCopy, nameResolver = viewModel::getPeerName)
+					Box(Modifier.animateItem().padding(horizontal = 16.dp)) {
+						TransactionRow(item, myId, isPending = item.isUnsynced, onCopy = onCopy)
 					}
 				}
 			}
 		} else {
 			if (hasPending) {
-				item { Text("Pending", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
+				item(key = "pending-header") { Text("Pending", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.animateItem().padding(horizontal = 16.dp, vertical = 4.dp)) }
 				items(pendingActions, key = { "pending-${it.id}" }) { action ->
-					Box(Modifier.padding(horizontal = 16.dp)) {
-						LocalPendingRow(action, onCopy = onCopy, nameResolver = viewModel::getPeerName)
+					Box(Modifier.animateItem().padding(horizontal = 16.dp)) {
+						LocalPendingRow(
+							action = action,
+							onCopy = onCopy,
+							nameResolver = viewModel::getAccountName,
+							isLocked = viewModel.processingActionId == action.id,
+							onEdit = { editingAction = action },
+							onDelete = {
+								if (!viewModel.cancelPendingAction(action.id)) {
+									viewModel.showUserMessage("Already being written to the card")
+								}
+							}
+						)
 					}
 				}
 				items(safeUnsyncedTxs, key = { "unsynced-${it.tx.id}" }) { item ->
-					Box(Modifier.padding(horizontal = 16.dp)) {
-						TransactionRow(item, myId, isPending = true, onCopy = onCopy, nameResolver = viewModel::getPeerName)
+					Box(Modifier.animateItem().padding(horizontal = 16.dp)) {
+						TransactionRow(item, myId, isPending = true, onCopy = onCopy)
 					}
 				}
-				item { Spacer(Modifier.height(16.dp)) }
+				item(key = "pending-spacer") { Spacer(Modifier.height(16.dp)) }
 			}
 			if (sessionList.isNotEmpty()) {
 				items(sessionList, key = { "session-${it.tx.id}" }) { item ->
-					Box(Modifier.padding(horizontal = 16.dp)) {
-						TransactionRow(item, myId, isPending = false, onCopy = onCopy, nameResolver = viewModel::getPeerName)
+					Box(Modifier.animateItem().padding(horizontal = 16.dp)) {
+						TransactionRow(item, myId, isPending = false, onCopy = onCopy)
 					}
 				}
 			} else if (!hasPending) {
-				item {
-					Box(modifier = Modifier.fillMaxWidth().padding(top = 48.dp), contentAlignment = Alignment.Center) {
+				item(key = "empty-recent") {
+					Box(modifier = Modifier.animateItem().fillMaxWidth().padding(top = 48.dp), contentAlignment = Alignment.Center) {
 						Column(horizontalAlignment = Alignment.CenterHorizontally) {
 							Icon(Icons.Default.CheckCircle, "Done", tint = Color.Green, modifier = Modifier.size(64.dp).alpha(0.5f))
 							Spacer(Modifier.height(16.dp))
@@ -701,11 +720,42 @@ fun TransactionDashboardList(
 			}
 		}
 
-		if (spacerHeight > 0.dp) item { Spacer(Modifier.height(spacerHeight)) }
+		if (spacerHeight > 0.dp) item(key = "bottom-spacer") { Spacer(Modifier.height(spacerHeight)) }
+	}
+
+	editingAction?.let { action ->
+		val budget = viewModel.displayBalance + action.amount
+
+		fun save(amount: Long, targetId: String?) {
+			if (!viewModel.updatePendingAction(action.id, amount, targetId)) {
+				viewModel.showUserMessage("Already being written to the card")
+			}
+			editingAction = null
+		}
+
+		if (action.type == "SEND") {
+			SendOverlay(
+				peers = viewModel.knownNetworkPeers,
+				currentBalance = budget,
+				ownId = myId,
+				screenHeight = screenHeight,
+				initialAmount = action.amount,
+				initialReceiver = action.targetId,
+				onDismiss = { editingAction = null },
+				onConfirm = { targetId, amount -> save(amount, targetId) }
+			)
+		} else {
+			MintBurnOverlay(
+				title = action.type.capitalize(),
+				maxBalance = if (action.type == "MINT") null else budget,
+				initialAmount = action.amount,
+				onDismiss = { editingAction = null },
+				onConfirm = { amount -> save(amount, null) }
+			)
+		}
 	}
 }
 
-@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun SharedWalletCard(
 	account: StoredAccount?,
@@ -719,7 +769,7 @@ private fun SharedWalletCard(
 	if (account != null) {
 		val interactionSource = remember { MutableInteractionSource() }
 		val isHovered by interactionSource.collectIsHoveredAsState()
-		val isDarkTheme = isSystemInDarkTheme()
+		val isDarkTheme = LocalIsDarkTheme.current
 		val hoverDim by animateFloatAsState(
 			targetValue = if (isHovered) (if (isDarkTheme) 0.4f else 0.15f) else 0f,
 			animationSpec = tween(150),
@@ -756,7 +806,7 @@ private fun DashboardDialogs(
 	onDismissMint: () -> Unit,
 	onDismissBurn: () -> Unit
 ) {
-	val currentBalance = viewModel.balance
+	val currentBalance = viewModel.displayBalance
 	val ownId = viewModel.currentId ?: ""
 
 	if (showSend) {
@@ -902,12 +952,18 @@ fun UnifiedPeerInput(
 			trailingIcon = {
 				Row {
 					if (value.isNotEmpty()) {
-						IconButton(onClick = { onValueChange(""); isDropdownExpanded = false }) {
-							Icon(Icons.Default.Close, "Clear", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+						AdaptiveIconButton(
+							onClick = { onValueChange(""); isDropdownExpanded = false },
+							colors = IconButtonDefaults.iconButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant)
+						) {
+							Icon(Icons.Default.Close, "Clear")
 						}
 					}
-					IconButton(onClick = { isDropdownExpanded = !isDropdownExpanded }) {
-						Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = "Dropdown", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+					AdaptiveIconButton(
+						onClick = { isDropdownExpanded = !isDropdownExpanded },
+						colors = IconButtonDefaults.iconButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant)
+					) {
+						Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = "Dropdown")
 					}
 				}
 			},
@@ -957,6 +1013,7 @@ fun UnifiedPeerInput(
 	}
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ModernActionSheet(
 	title: String,
@@ -968,11 +1025,21 @@ fun ModernActionSheet(
 ) {
 	AppBackHandler { onDismissRequest() }
 
-	SafeOverlay(onDismissRequest = onDismissRequest) {
+	val sheetState = rememberAdaptiveSheetState(skipPartiallyExpanded = false)
+	LaunchedEffect(Unit) { sheetState.show() }
+
+	AdaptiveBottomSheet(
+		onDismissRequest = onDismissRequest,
+		adaptiveSheetState = sheetState,
+		containerColor = MaterialTheme.colorScheme.surface
+	) {
+		val focusManager = LocalFocusManager.current
 		Column(
 			modifier = Modifier
 				.fillMaxWidth()
-				.padding(24.dp)
+				.padding(horizontal = 24.dp)
+				.padding(top = 8.dp, bottom = 24.dp)
+				.pointerInput(Unit) { detectTapGestures { focusManager.clearFocus() } }
 				.onPreviewKeyEvent { event ->
 					if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
 					when (event.key) {
@@ -993,46 +1060,52 @@ fun ModernActionSheet(
 					modifier = Modifier.align(Alignment.CenterStart)
 				)
 
-				Surface(
+				AdaptiveIconButton(
 					onClick = onDismissRequest,
-					modifier = Modifier.align(Alignment.CenterEnd).size(36.dp).clip(CircleShape),
-					shape = CircleShape,
-					color = MaterialTheme.colorScheme.surfaceVariant
+					modifier = Modifier.align(Alignment.CenterEnd).size(36.dp),
+					colors = IconButtonDefaults.iconButtonColors(
+						containerColor = MaterialTheme.colorScheme.surfaceVariant,
+						contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+					)
 				) {
-					Box(contentAlignment = Alignment.Center) {
-						Icon(
-							Icons.Default.Close,
-							"Close",
-							tint = MaterialTheme.colorScheme.onSurfaceVariant,
-							modifier = Modifier.size(20.dp)
-						)
-					}
+					Icon(
+						Icons.Default.Close,
+						"Close",
+						modifier = Modifier.size(20.dp)
+					)
 				}
 			}
 
 			Spacer(Modifier.height(32.dp))
 
-			Column(modifier = Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.Center) {
-				content()
-			}
+			content()
 
 			Spacer(Modifier.height(32.dp))
 
 			AppButton(
 				text = confirmText,
 				onClick = { if (isConfirmEnabled) onConfirm() },
-				modifier = Modifier.fillMaxWidth().height(56.dp).alpha(if (isConfirmEnabled) 1f else 0.5f),
-				backgroundColor = MaterialTheme.colorScheme.primary,
-				textColor = MaterialTheme.colorScheme.onPrimary
+				modifier = Modifier.fillMaxWidth().height(56.dp),
+				backgroundColor = if (isConfirmEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+				textColor = if (isConfirmEnabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
 			)
 		}
 	}
 }
 
 @Composable
-fun SendOverlay(peers: List<PeerOption>, currentBalance: Long, ownId: String, screenHeight: Dp, onDismiss: () -> Unit, onConfirm: (String, Long) -> Unit) {
-	var amountText by remember { mutableStateOf("") }
-	var receiverInput by remember { mutableStateOf("") }
+fun SendOverlay(
+	peers: List<PeerOption>,
+	currentBalance: Long,
+	ownId: String,
+	screenHeight: Dp,
+	initialAmount: Long? = null,
+	initialReceiver: String? = null,
+	onDismiss: () -> Unit,
+	onConfirm: (String, Long) -> Unit
+) {
+	var amountText by remember { mutableStateOf(initialAmount?.toString() ?: "") }
+	var receiverInput by remember { mutableStateOf(initialReceiver ?: "") }
 
 	val amountLong = amountText.toLongOrNull()
 
@@ -1075,8 +1148,14 @@ fun SendOverlay(peers: List<PeerOption>, currentBalance: Long, ownId: String, sc
 }
 
 @Composable
-fun MintBurnOverlay(title: String, maxBalance: Long? = null, onDismiss: () -> Unit, onConfirm: (Long) -> Unit) {
-	var amountText by remember { mutableStateOf("") }
+fun MintBurnOverlay(
+	title: String,
+	maxBalance: Long? = null,
+	initialAmount: Long? = null,
+	onDismiss: () -> Unit,
+	onConfirm: (Long) -> Unit
+) {
+	var amountText by remember { mutableStateOf(initialAmount?.toString() ?: "") }
 	val amountLong = amountText.toLongOrNull()
 
 	val isValid = if (maxBalance == null) {
@@ -1122,7 +1201,7 @@ fun FilterSection(viewModel: WalletViewModel, screenHeight: Dp, backgroundColor:
 			horizontalArrangement = Arrangement.spacedBy(8.dp),
 			verticalAlignment = Alignment.CenterVertically
 		) {
-			val selection = viewModel.filterTypes
+			val selection = viewModel.history.types
 			val hasMint = selection.contains(
 				TxFilterType.MINT)
 			val hasBurn = selection.contains(
@@ -1145,8 +1224,8 @@ fun FilterSection(viewModel: WalletViewModel, screenHeight: Dp, backgroundColor:
 					else -> "Sender / Receiver"
 				}
 
-				val relevantIds = remember(viewModel.filteredHistory, viewModel.filterTypes, viewModel.currentId) {
-					val types = viewModel.filterTypes
+				val relevantIds = remember(viewModel.filteredHistory, viewModel.history.types, viewModel.currentId) {
+					val types = viewModel.history.types
 					val onlySend = types.contains(
 						TxFilterType.SEND) && !types.contains(
 						TxFilterType.RECEIVE)
@@ -1175,13 +1254,13 @@ fun FilterSection(viewModel: WalletViewModel, screenHeight: Dp, backgroundColor:
 
 				Box(Modifier.weight(1f)) {
 					UnifiedPeerInput(
-						value = viewModel.filterPeerQuery,
-						onValueChange = { viewModel.filterPeerQuery = it },
+						value = viewModel.history.peerQuery,
+						onValueChange = { viewModel.history.peerQuery = it },
 						peers = relevantPeers,
 						placeholder = label,
 						screenHeight = screenHeight,
 						containerColor = inputBackgroundColor,
-						onPeerSelected = { viewModel.filterPeerQuery = it }
+						onPeerSelected = { viewModel.history.peerQuery = it }
 					)
 				}
 			}
@@ -1224,7 +1303,7 @@ fun SortIndicator(label: String, isActive: Boolean, isAscending: Boolean, onClic
 	Row(
 		modifier = Modifier
 			.clip(RoundedCornerShape(4.dp))
-			.clickable(onClick = onClick)
+			.adaptiveClickable(shape = RoundedCornerShape(4.dp), onClick = onClick)
 			.padding(vertical = 4.dp, horizontal = 4.dp),
 		verticalAlignment = Alignment.CenterVertically
 	) {
@@ -1237,7 +1316,7 @@ fun SortIndicator(label: String, isActive: Boolean, isAscending: Boolean, onClic
 @Composable
 fun TypeFilterDropdown(viewModel: WalletViewModel, containerColor: Color = MaterialTheme.colorScheme.surfaceVariant) {
 	var isExpanded by remember { mutableStateOf(false) }
-	val selectedTypes = viewModel.filterTypes
+	val selectedTypes = viewModel.history.types
 	val interactionSource = remember { MutableInteractionSource() }
 
 	fun getIconData(type: TxFilterType): Pair<ImageVector, Color> {
@@ -1317,11 +1396,11 @@ fun TypeFilterDropdown(viewModel: WalletViewModel, containerColor: Color = Mater
 					},
 					trailingIcon = {
 						Checkbox(
-							checked = viewModel.filterTypes.contains(type),
-							onCheckedChange = { viewModel.toggleFilterType(type) }
+							checked = viewModel.history.types.contains(type),
+							onCheckedChange = { viewModel.history.toggleType(type) }
 						)
 					},
-					onClick = { viewModel.toggleFilterType(type) }
+					onClick = { viewModel.history.toggleType(type) }
 				)
 			}
 		}
@@ -1380,15 +1459,16 @@ private fun ActionButton(
 	onClick: () -> Unit
 ) {
 	Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(IntrinsicSize.Min)) {
-		Surface(
-			modifier = Modifier.size(size).clip(CircleShape).clickable(onClick = onClick),
-			shape = CircleShape,
-			color = MaterialTheme.colorScheme.surface,
-			shadowElevation = 2.dp
+		Box(
+			modifier = Modifier
+				.size(size)
+				.shadow(2.dp, CircleShape)
+				.clip(CircleShape)
+				.background(MaterialTheme.colorScheme.surface)
+				.adaptiveClickable(shape = CircleShape, onClick = onClick),
+			contentAlignment = Alignment.Center
 		) {
-			Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-				Icon(icon, contentDescription = text, tint = color, modifier = Modifier.size(size * 0.4f))
-			}
+			Icon(icon, contentDescription = text, tint = color, modifier = Modifier.size(size * 0.4f))
 		}
 		Spacer(Modifier.height(4.dp))
 		val fontSize = (12 * (size.value / 60)).coerceAtLeast(10f).sp
@@ -1397,7 +1477,14 @@ private fun ActionButton(
 }
 
 @Composable
-fun LocalPendingRow(action: PendingAction, onCopy: (String) -> Unit, nameResolver: (String) -> String?) {
+fun LocalPendingRow(
+	action: PendingAction,
+	onCopy: (String) -> Unit,
+	nameResolver: (String) -> String?,
+	isLocked: Boolean = false,
+	onEdit: (() -> Unit)? = null,
+	onDelete: (() -> Unit)? = null
+) {
 	val title = when (action.type) {
 		"SEND" -> "Send"
 		"MINT" -> "Mint"
@@ -1405,117 +1492,161 @@ fun LocalPendingRow(action: PendingAction, onCopy: (String) -> Unit, nameResolve
 		else -> "Processing"
 	}
 	val isIncoming = action.type == "MINT"
-	val color = if (isIncoming) Color.Green else (if (action.type == "SEND" || action.type == "BURN") Color.Red else MaterialTheme.colorScheme.onSurfaceVariant)
-	val prefix = if (isIncoming) "+" else "-"
-	val iconVector = when (action.type) {
+    val prefix = if (isIncoming) "+" else "-"
+	val icon = when (action.type) {
 		"MINT" -> Icons.Default.Add
 		"BURN" -> Icons.Default.Remove
 		else -> Icons.AutoMirrored.Filled.Send
 	}
-	Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(12.dp), elevation = CardDefaults.cardElevation(1.dp)) {
-		Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-			Icon(imageVector = iconVector, contentDescription = "Pending", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(24.dp))
-			Spacer(Modifier.width(16.dp))
-			Column(Modifier.weight(1f)) {
-				Text(title, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-				if (action.targetId != null && action.type == "SEND") {
-					val savedName = nameResolver(action.targetId)
-					val textToShow = savedName ?: action.targetId
-					val interactionSource = remember { MutableInteractionSource() }
 
-					Row(
-						verticalAlignment = Alignment.CenterVertically,
-						modifier = Modifier.clickable(
-							interactionSource = interactionSource,
-							indication = null
-						) { onCopy(action.targetId) }
-					) {
-						Text("To ", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-						FrontEllipsizedText(
-							text = textToShow,
-							style = MaterialTheme.typography.bodySmall,
-							color = MaterialTheme.colorScheme.onSurfaceVariant,
-							modifier = Modifier.fillMaxWidth()
-						)
-					}
+	val row: @Composable () -> Unit = {
+		EntryRow(
+			title = title,
+			icon = icon,
+			iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+			subtitle = action.targetId?.takeIf { action.type == "SEND" }?.let { target ->
+				{
+					TransactionPeerSubtitle(
+						id = nameResolver(target) ?: target,
+						prefix = "To ",
+						onClick = { onCopy(target) }
+					)
 				}
+			},
+			trailing = { TransactionAmount("$prefix ${action.amount}", MaterialTheme.colorScheme.onSurfaceVariant) }
+		)
+	}
+
+	if (isLocked || onEdit == null || onDelete == null) {
+		row()
+	} else {
+		SwipeablePendingRow(onEdit = onEdit, onDelete = onDelete, content = row)
+	}
+}
+
+@Composable
+private fun SwipeablePendingRow(
+	onEdit: () -> Unit,
+	onDelete: () -> Unit,
+	content: @Composable () -> Unit
+) {
+	val density = LocalDensity.current
+	val triggerPx = with(density) { 96.dp.toPx() }
+	val offsetX = remember { Animatable(0f) }
+	val scope = rememberCoroutineScope()
+
+	fun settle() {
+		scope.launch {
+			val released = offsetX.value
+			offsetX.animateTo(0f, tween(200))
+			if (released <= -triggerPx) onDelete() else if (released >= triggerPx) onEdit()
+		}
+	}
+
+	val offset = offsetX.value
+	val progress = (abs(offset) / triggerPx).coerceIn(0f, 1f)
+	val isDelete = offset < 0f
+	val actionColor = if (isDelete) MaterialTheme.colorScheme.error else DoleBlue
+	val surface = MaterialTheme.colorScheme.surface
+
+	Box(Modifier.fillMaxWidth()) {
+		if (progress > 0f) {
+			Box(
+				modifier = Modifier
+					.matchParentSize()
+					.clip(RoundedCornerShape(12.dp))
+					.background(actionColor.copy(alpha = progress))
+			) {
+				Icon(
+					imageVector = if (isDelete) Icons.Default.Delete else Icons.Default.Edit,
+					contentDescription = if (isDelete) "Delete" else "Edit",
+					tint = lerp(actionColor, surface, progress),
+					modifier = Modifier
+						.align(if (isDelete) Alignment.CenterEnd else Alignment.CenterStart)
+						.padding(horizontal = 28.dp)
+						.size(22.dp)
+				)
 			}
-			Text("$prefix DM ${action.amount}", fontWeight = FontWeight.Bold, color = color.copy(alpha = 0.6f))
+		}
+
+		Box(
+			modifier = Modifier
+				.offset { IntOffset(offset.roundToInt(), 0) }
+				.draggable(
+					orientation = Orientation.Horizontal,
+					state = rememberDraggableState { delta ->
+						scope.launch {
+							val limit = triggerPx * 1.4f
+							offsetX.snapTo((offsetX.value + delta).coerceIn(-limit, limit))
+						}
+					},
+					onDragStopped = { settle() }
+				)
+		) {
+			content()
 		}
 	}
 }
 
 @Composable
-fun TransactionRow(item: DisplayTransaction, myId: String, isPending: Boolean, onCopy: (String) -> Unit, nameResolver: (String) -> String?) {
+fun TransactionRow(item: DisplayTransaction, myId: String, isPending: Boolean, onCopy: (String) -> Unit) {
 	val tx = item.tx
+	if (tx is GenesisTransaction) return
+
 	val isMe = tx.author == myId
-	val isGenesis = tx is GenesisTransaction
-	val isIncoming = !isMe && tx !is BurnTransaction && !isGenesis
-	if (isGenesis) return
+	val isIncoming = !isMe && tx !is BurnTransaction
 
-	Card(
-		colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-		shape = RoundedCornerShape(12.dp),
-		elevation = CardDefaults.cardElevation(1.dp)
-	) {
-		Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-			val iconVector = when {
-				isIncoming -> Icons.AutoMirrored.Filled.Send
-				tx is BurnTransaction -> Icons.Default.Remove
-				tx is MintTransaction -> Icons.Default.Add
-				else -> Icons.AutoMirrored.Filled.Send
-			}
-			val iconTint = when {
-				isPending -> MaterialTheme.colorScheme.onSurfaceVariant
-				tx is BurnTransaction -> Color.Red
-				tx is MintTransaction -> Color.Green
-				else -> Color(0xFF007AFF)
-			}
-			Icon(
-				imageVector = iconVector,
-				contentDescription = null,
-				tint = iconTint,
-				modifier = Modifier.size(28.dp).graphicsLayer { if (isIncoming) rotationZ = 180f }
-			)
-			Spacer(Modifier.width(16.dp))
-			Column(modifier = Modifier.weight(1f)) {
-				val title = if (isPending && isIncoming) "Receive" else when (tx) {
-					is MintTransaction -> if (isPending) "Mint" else "Minted"
-					is BurnTransaction -> if (isPending) "Burn" else "Burned"
-					is SendTransaction -> if (isIncoming) "Received" else (if (isPending) "Send" else "Sent")
-					else -> "Transaction"
-				}
-				Text(title, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-				if (tx !is MintTransaction && tx !is BurnTransaction) {
-					val prefixLabel = if (tx is SendTransaction && !isIncoming) "To " else "From "
-					val rawId = if (tx is SendTransaction && !isIncoming) tx.target else tx.author
-					val savedName = nameResolver(rawId)
-					val textToShow = savedName ?: rawId
-					val interactionSource = remember { MutableInteractionSource() }
-
-					Row(
-						verticalAlignment = Alignment.CenterVertically,
-						modifier = Modifier.clickable(
-							interactionSource = interactionSource,
-							indication = null
-						) { onCopy(rawId) }
-					) {
-						Text(prefixLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-						FrontEllipsizedText(
-							text = textToShow,
-							style = MaterialTheme.typography.bodySmall,
-							color = MaterialTheme.colorScheme.onSurfaceVariant,
-							modifier = Modifier.fillMaxWidth()
-						)
-					}
-				}
-			}
-			Spacer(Modifier.width(8.dp))
-			val isExpense = tx is BurnTransaction || (tx is SendTransaction && !isIncoming)
-			val prefix = if (isExpense) "-" else "+"
-			val color = if (isExpense) Color.Red else Color.Green
-			val amountText = if (item.delta > 0) "$prefix DM ${item.delta}" else "..."
-			Text(amountText, fontWeight = FontWeight.Bold, color = if (isPending) color.copy(alpha = 0.6f) else color)
-		}
+	val icon = when {
+		isIncoming -> Icons.AutoMirrored.Filled.Send
+		tx is BurnTransaction -> Icons.Default.Remove
+		tx is MintTransaction -> Icons.Default.Add
+		else -> Icons.AutoMirrored.Filled.Send
 	}
+	val iconTint = when {
+		isPending -> MaterialTheme.colorScheme.onSurfaceVariant
+		tx is BurnTransaction -> Color.Red
+		tx is MintTransaction -> Color.Green
+		else -> DoleBlue
+	}
+	val title = if (isPending && isIncoming) "Receive" else when (tx) {
+		is MintTransaction -> if (isPending) "Mint" else "Minted"
+		is BurnTransaction -> if (isPending) "Burn" else "Burned"
+		is SendTransaction -> if (isIncoming) "Received" else (if (isPending) "Send" else "Sent")
+		else -> "Transaction"
+	}
+
+	val hasPeer = tx !is MintTransaction && tx !is BurnTransaction
+	val rawId = if (tx is SendTransaction && !isIncoming) tx.target else tx.author
+
+	val isExpense = tx is BurnTransaction || (tx is SendTransaction && !isIncoming)
+	val amountColor = if (isPending) MaterialTheme.colorScheme.onSurfaceVariant
+		else if (isExpense) Color.Red else Color.Green
+	val amountText = if (item.delta > 0) "${if (isExpense) "-" else "+"} ${item.delta}" else "…"
+
+    EntryRow(
+        title = title,
+        icon = icon,
+        iconTint = iconTint,
+        iconRotated = isIncoming,
+        timestamp = formatTransactionTimestamp(
+            tx.timestamp
+        ),
+        subtitle = if (hasPeer) ({
+            TransactionPeerSubtitle(
+                id = rawId,
+                prefix = if (tx is SendTransaction && !isIncoming) "To " else "From ",
+                onClick = {
+                    onCopy(
+                        rawId
+                    )
+                }
+            )
+        }) else null,
+        trailing = {
+            TransactionAmount(
+                amountText,
+                amountColor
+            )
+        }
+    )
 }

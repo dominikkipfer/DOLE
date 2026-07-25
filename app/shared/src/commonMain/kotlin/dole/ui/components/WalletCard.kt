@@ -42,6 +42,12 @@ import dole.data.models.StoredAccount
 
 val LocalCardPulse = compositionLocalOf { 0f }
 
+private fun String.splitInHalves(): String {
+    if (length < 24) return this
+    val half = (length + 1) / 2
+    return "${take(half)}\n${drop(half)}"
+}
+
 @Suppress("unused")
 enum class EdgeLabelPlacement { Top, Bottom, Left, Right }
 
@@ -256,10 +262,7 @@ fun FrequencyRingDrawing(
         val ringWidth = baseCardWidth + (2 * currentExpansion)
         val ringHeight = baseCardHeight + (2 * currentExpansion)
 
-        val topLeft = Offset(
-            x = center.x - (ringWidth / 2f),
-            y = center.y - (ringHeight / 2f)
-        )
+        val topLeft = Offset(x = center.x - (ringWidth / 2f), y = center.y - (ringHeight / 2f))
 
         if (alpha > 0f) {
             drawRoundRect(
@@ -308,7 +311,7 @@ fun BoxScope.CardName(name: String, scaleFactor: Float) {
 
 @Composable
 fun BoxScope.CardId(account: StoredAccount, showFullId: Boolean, scaleFactor: Float, onIdClick: (() -> Unit)?) {
-    val idText = if (showFullId) account.id else "•••• ${account.id.takeLast(4)}"
+    val idText = if (showFullId) account.id.splitInHalves() else "•••• ${account.id.takeLast(4)}"
     val density = LocalDensity.current
     val fontSize = with(density) { (9.dp * scaleFactor).toSp() }
     val letterSpacing = with(density) { (1.5.dp * scaleFactor).toSp() }
@@ -319,10 +322,10 @@ fun BoxScope.CardId(account: StoredAccount, showFullId: Boolean, scaleFactor: Fl
         fontSize = fontSize,
         fontWeight = FontWeight.Medium,
         letterSpacing = letterSpacing,
-        style = TextStyle(lineHeight = fontSize),
+        style = TextStyle(lineHeight = fontSize * 1.5f),
         modifier = Modifier
             .align(Alignment.BottomStart)
-            .padding(bottom = 18.dp * scaleFactor, start = 20.dp * scaleFactor)
+            .padding(bottom = 18.dp * scaleFactor, start = 20.dp * scaleFactor, end = 36.dp * scaleFactor)
             .then(if (onIdClick != null) Modifier.clickable(interactionSource = null, indication = null) {
                 onIdClick()
             } else Modifier)

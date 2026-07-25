@@ -18,24 +18,31 @@ data class PeerOption(
     val label: String
 )
 
+data class NetworkAccountSummary(
+    val id: String,
+    val name: String?,
+    val balance: Long,
+    val txCount: Int
+)
+
 @Serializable
 data class PendingAction(
     val id: String = kotlin.random.Random.nextLong().toString(),
     val type: String,
     val amount: Long,
-    val targetId: String? = null
+    val targetId: String? = null,
+    val attemptedAtCardSeq: Long? = null
 )
 
-@Serializable
-data class RustTxDto(
-    val id: String,
-    val type: String,
-    val goc: Long,
-    val author: String,
-    val target: String,
-    val seq: Long,
-    val timestamp: Long,
-    val signature: String,
-    val certificate: String? = null,
-    val publicKey: String? = null
+data class PeerConnection(
+    val sessionId: String,
+    val ble: Boolean,
+    val mdns: Boolean,
+    val internet: Boolean
+)
+
+data class TransportStatus(
+    val ble: Boolean,
+    val iroh: Boolean,
+    val internet: Boolean
 )

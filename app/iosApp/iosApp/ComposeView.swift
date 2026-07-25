@@ -2,10 +2,10 @@ import SwiftUI
 import shared
 
 struct ComposeView: UIViewControllerRepresentable {
-    private let card = IosSmartCard()
+    let viewModel: WalletViewModel
 
     func makeUIViewController(context: Context) -> UIViewController {
-        MainViewControllerKt.MainViewController(card: card)
+        MainViewControllerKt.MainViewController(viewModel: viewModel)
     }
 
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}

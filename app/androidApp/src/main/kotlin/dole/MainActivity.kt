@@ -2,6 +2,7 @@ package dole
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -17,9 +18,9 @@ import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import com.russhwolf.settings.SharedPreferencesSettings
 import dole.card.AndroidSmartCard
-import dole.core.CoreWrapper
-import dole.data.AccountRepository
-import dole.data.AccountStorage
+import dole.data.AccountPreferences
+import dole.data.AccountRegistry
+import dole.data.CardSyncState
 import dole.utils.AndroidSecureStorage
 import dole.utils.ScreenCaptureProtection
 import dole.viewmodel.WalletApp
@@ -29,22 +30,22 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
 
     private var multicastLock: WifiManager.MulticastLock? = null
     private var nfcAdapter: NfcAdapter? = null
-    private var syncStarted = false
-    private var bleStarted = false
     private lateinit var storagePath: String
     private lateinit var viewModel: WalletViewModel
     private val smartCard = AndroidSmartCard(null)
 
     private val bluetoothStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            if (!::viewModel.isInitialized) return
+
             when (intent?.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
                 BluetoothAdapter.STATE_TURNING_OFF, BluetoothAdapter.STATE_OFF -> {
                     Log.i("DOLE", "Bluetooth off; stopping BLE transport")
-                    stopBleBroadcast()
+                    viewModel.onBluetoothAvailabilityChanged(false)
                 }
-                BluetoothAdapter.STATE_ON -> if (syncStarted) {
+                BluetoothAdapter.STATE_ON -> {
                     Log.i("DOLE", "Bluetooth back on; restarting BLE transport")
-                    startBleBroadcast()
+                    viewModel.onBluetoothAvailabilityChanged(true)
                 }
             }
         }
@@ -72,10 +73,11 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
         storagePath = applicationContext.filesDir.absolutePath
         val prefs = getSharedPreferences("dole_settings", MODE_PRIVATE)
         val settings = SharedPreferencesSettings(prefs)
-        val accountStorage = AccountStorage(settings)
         val secureStorage = AndroidSecureStorage(this)
-        val accountRepo = AccountRepository(secureStorage, accountStorage)
-        viewModel = WalletViewModel(accountRepo, accountStorage, smartCard, storagePath)
+        val accountPreferences = AccountPreferences(settings)
+        val cardSyncState = CardSyncState(settings)
+        val accounts = AccountRegistry(settings, secureStorage, accountPreferences, cardSyncState)
+        viewModel = WalletViewModel(accounts, accountPreferences, cardSyncState, settings, smartCard, storagePath)
 
         ScreenCaptureProtection.bind(this)
         if (Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false)
@@ -122,11 +124,7 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
         try {
             unregisterReceiver(bluetoothStateReceiver)
         } catch (_: IllegalArgumentException) { }
-        stopBleBroadcast()
-        if (syncStarted) {
-            CoreWrapper.stopGlobalSync()
-            syncStarted = false
-        }
+        if (::viewModel.isInitialized) viewModel.stopNetworkServices()
         releaseMulticastLock()
         super.onDestroy()
     }
@@ -152,35 +150,11 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
     }
 
     private fun startNetworkServices() {
-        startNetworkSync()
-        startBleBroadcast()
-    }
-
-    private fun startNetworkSync() {
-        if (syncStarted) return
-
         acquireMulticastLock()
-        CoreWrapper.startGlobalSync(storagePath)
-        syncStarted = true
-        Log.i("DOLE", "Sync engine start requested")
-    }
-
-    private fun startBleBroadcast() {
-        if (bleStarted) {
-            return
-        }
-        if (CoreWrapper.startBleAdvertising(storagePath)) {
-            bleStarted = true
-            Log.i("DOLE", "BLE transport start requested")
-        }
-    }
-
-    private fun stopBleBroadcast() {
-        if (!bleStarted) {
-            return
-        }
-        CoreWrapper.stopBleAdvertising()
-        bleStarted = false
+        val adapter = (getSystemService(BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
+        viewModel.onBluetoothAvailabilityChanged(adapter?.isEnabled == true)
+        viewModel.onNetworkPermissionsGranted()
+        Log.i("DOLE", "Network services start requested")
     }
 
     private fun acquireMulticastLock() {

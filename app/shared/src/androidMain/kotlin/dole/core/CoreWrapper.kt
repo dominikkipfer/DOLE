@@ -1,5 +1,8 @@
 package dole.core
 
+import dole.viewmodel.PeerConnection
+import dole.viewmodel.TransportStatus
+
 actual object CoreWrapper {
     private var ledger: Ledger? = null
 
@@ -25,20 +28,24 @@ actual object CoreWrapper {
         ledger = null
     }
 
+    actual fun resetLedger(storagePath: String): Boolean {
+        return dole.core.resetLedger(storagePath)
+    }
+
     actual fun genesis(sigHex: String, certHex: String) {
         ledger?.genesis(sigHex, certHex)
     }
 
-    actual fun mint(amount: Long, seq: Long, sigHex: String) {
-        ledger?.mint(amount, seq, sigHex)
+    actual fun mint(goc: Long, seq: Long, sigHex: String): Boolean {
+        return ledger?.mint(goc, seq, sigHex) ?: false
     }
 
-    actual fun burn(amount: Long, seq: Long, sigHex: String) {
-        ledger?.burn(amount, seq, sigHex)
+    actual fun burn(goc: Long, seq: Long, sigHex: String): Boolean {
+        return ledger?.burn(goc, seq, sigHex) ?: false
     }
 
-    actual fun send(targetPubKey: String, amount: Long, seq: Long, sigHex: String) {
-        ledger?.send(targetPubKey, amount, seq, sigHex)
+    actual fun send(targetPubKey: String, goc: Long, seq: Long, sigHex: String): Boolean {
+        return ledger?.send(targetPubKey, goc, seq, sigHex) ?: false
     }
 
     actual fun bytesToHex(bytes: ByteArray): String = dole.core.bytesToHex(bytes)
@@ -55,5 +62,21 @@ actual object CoreWrapper {
 
     actual fun stopBleAdvertising() {
         dole.core.stopBleAdvertising()
+    }
+
+    actual fun setInternetEnabled(enabled: Boolean) {
+        dole.core.setInternetEnabled(enabled)
+    }
+
+    actual fun setIrohEnabled(enabled: Boolean) {
+        dole.core.setIrohEnabled(enabled)
+    }
+
+    actual fun connectedPeers(): List<PeerConnection> = dole.core.connectedPeers().map {
+        PeerConnection(it.sessionId, it.ble, it.mdns, it.internet)
+    }
+
+    actual fun transportStatus(): TransportStatus = dole.core.transportStatus().let {
+        TransportStatus(it.ble, it.iroh, it.internet)
     }
 }

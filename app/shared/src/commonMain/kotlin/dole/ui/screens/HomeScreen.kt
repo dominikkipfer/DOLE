@@ -1,51 +1,78 @@
 package dole.ui.screens
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibilityScope
-import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
-import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.DeveloperMode
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -54,17 +81,43 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
 import androidx.compose.ui.unit.times
+import androidx.compose.ui.unit.toSize
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.zIndex
+import com.mohamedrejeb.calf.ui.ExperimentalCalfUiApi
+import com.mohamedrejeb.calf.ui.button.AdaptiveIconButton
+import com.mohamedrejeb.calf.ui.navigation.AdaptiveNavigationBar
+import com.mohamedrejeb.calf.ui.navigation.AdaptiveScaffold
+import com.mohamedrejeb.calf.ui.navigation.UIKitUITabBarItem
+import com.mohamedrejeb.calf.ui.uikit.UIKitImage
+import dole.data.models.BurnTransaction
+import dole.data.models.GenesisTransaction
+import dole.data.models.MintTransaction
+import dole.data.models.SendTransaction
 import dole.data.models.StoredAccount
+import dole.ui.components.AppTextField
+import dole.ui.components.DoleLogo
 import dole.ui.components.EdgeLabelPlacement
+import dole.ui.components.TransactionAmount
+import dole.ui.components.TransactionPeerPairSubtitle
+import dole.ui.components.TransactionPeerSubtitle
+import dole.ui.components.TransactionPlainSubtitle
+import dole.ui.components.EntryRow
 import dole.ui.components.WalletCard
+import dole.ui.components.formatTransactionTimestamp
 import dole.ui.modifiers.sharedCardEffect
+import dole.utils.rememberAppClipboard
+import dole.ui.theme.DoleBlue
+import dole.ui.theme.LocalIsDarkTheme
+import dole.viewmodel.DisplayTransaction
+import dole.viewmodel.NetworkAccountSummary
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -72,7 +125,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
 
-@OptIn(ExperimentalSharedTransitionApi::class)
+@OptIn(ExperimentalCalfUiApi::class)
 @Composable
 fun HomeScreen(
     accounts: List<StoredAccount>,
@@ -80,6 +133,101 @@ fun HomeScreen(
     physicallyConnectedAccount: StoredAccount?,
     isOverlayVisible: Boolean,
     initialSelectedAccountId: String? = null,
+    globalHistory: List<DisplayTransaction>,
+    networkAccounts: List<NetworkAccountSummary>,
+    nameResolver: (String) -> String?,
+    onNotify: (String) -> Unit,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
+    onLogoTap: () -> Unit = {},
+    developerPane: (@Composable () -> Unit)? = null
+) {
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+
+    val hasDeveloperTab = developerPane != null
+
+    LaunchedEffect(hasDeveloperTab) {
+        if (!hasDeveloperTab && selectedTab > 1) selectedTab = 0
+    }
+
+    AdaptiveScaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0.dp),
+        bottomBar = {
+            AdaptiveNavigationBar(
+                containerColor = MaterialTheme.colorScheme.surface,
+                iosItems = buildList {
+                    add(UIKitUITabBarItem("Wallet", UIKitImage.SystemName("creditcard.fill")))
+                    add(UIKitUITabBarItem("History", UIKitImage.SystemName("clock.arrow.circlepath")))
+                    if (hasDeveloperTab) add(UIKitUITabBarItem("Developer", UIKitImage.SystemName("hammer.fill")))
+                },
+                iosSelectedIndex = selectedTab,
+                iosOnItemSelected = { selectedTab = it }
+            ) {
+                NavigationBarItem(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    icon = { Icon(Icons.Default.CreditCard, contentDescription = "Wallet") },
+                    label = { Text("Wallet") }
+                )
+                NavigationBarItem(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    icon = { Icon(Icons.Default.History, contentDescription = "History") },
+                    label = { Text("History") }
+                )
+                if (hasDeveloperTab) {
+                    NavigationBarItem(
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 },
+                        icon = { Icon(Icons.Default.DeveloperMode, contentDescription = "Developer") },
+                        label = { Text("Developer") }
+                    )
+                }
+            }
+        }
+    ) { paddingValues ->
+        AnimatedContent(
+            targetState = selectedTab,
+            label = "home_tab",
+            modifier = Modifier.fillMaxSize().padding(paddingValues),
+            transitionSpec = {
+                val direction = if (targetState > initialState) 1 else -1
+                (slideInHorizontally(tween(350)) { it / 4 * direction } + fadeIn(tween(350))) togetherWith
+                        (slideOutHorizontally(tween(350)) { -it / 4 * direction } + fadeOut(tween(250)))
+            }
+        ) { tab ->
+            when (tab) {
+                0 -> WalletPane(
+                    accounts = accounts,
+                    onAccountClick = onAccountClick,
+                    physicallyConnectedAccount = physicallyConnectedAccount,
+                    isOverlayVisible = isOverlayVisible,
+                    initialSelectedAccountId = initialSelectedAccountId,
+                    onLogoTap = onLogoTap,
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = animatedVisibilityScope
+                )
+                1 -> NetworkHistoryPane(
+                    transactions = globalHistory,
+                    accounts = networkAccounts,
+                    nameResolver = nameResolver,
+                    onNotify = onNotify
+                )
+                else -> developerPane?.invoke()
+            }
+        }
+    }
+}
+
+@Composable
+private fun WalletPane(
+    accounts: List<StoredAccount>,
+    onAccountClick: (StoredAccount) -> Unit,
+    physicallyConnectedAccount: StoredAccount?,
+    isOverlayVisible: Boolean,
+    initialSelectedAccountId: String? = null,
+    onLogoTap: () -> Unit,
     sharedTransitionScope: SharedTransitionScope,
     animatedVisibilityScope: AnimatedVisibilityScope
 ) {
@@ -170,18 +318,17 @@ fun HomeScreen(
                     .focusRequester(focusRequester)
                     .focusable()
                     .onKeyEvent { event ->
-                        if (event.type == KeyEventType.KeyDown) {
-                            when (event.key) {
-                                Key.DirectionDown, Key.DirectionRight -> { snapToRelative(1); true }
-                                Key.DirectionUp, Key.DirectionLeft -> { snapToRelative(-1); true }
-                                Key.Enter, Key.NumPadEnter -> {
-                                    val currentIndex = animatedScrollOffset.targetValue.roundToInt()
-                                    if (currentIndex in accounts.indices) onAccountClick(accounts[currentIndex])
-                                    true
-                                }
-                                else -> false
+                        event.type == KeyEventType.KeyDown && when (event.key) {
+                            Key.DirectionDown, Key.DirectionRight -> { snapToRelative(1); true }
+                            Key.DirectionUp, Key.DirectionLeft -> { snapToRelative(-1); true }
+                            Key.Enter, Key.NumPadEnter -> {
+                                val currentIndex = animatedScrollOffset.targetValue.roundToInt()
+                                if (currentIndex in accounts.indices) onAccountClick(accounts[currentIndex])
+                                true
                             }
-                        } else false
+
+                            else -> false
+                        }
                     }
                     .draggable(
                         orientation = if (isWideLayout) Orientation.Horizontal else Orientation.Vertical,
@@ -307,7 +454,7 @@ fun HomeScreen(
                         if (delta > -20f && delta < 20f) {
                             val interactionSource = remember { MutableInteractionSource() }
                             val isHovered by interactionSource.collectIsHoveredAsState()
-                            val isDarkTheme = isSystemInDarkTheme()
+                            val isDarkTheme = LocalIsDarkTheme.current
 
                             val hoverDim by animateFloatAsState(
                                 targetValue = if (isHovered) (if (isDarkTheme) 0.4f else 0.15f) else 0f,
@@ -346,12 +493,7 @@ fun HomeScreen(
                                     .offset { IntOffset(x = 0, y = finalY.roundToPx()) }
                             }
 
-                            Box(
-                                modifier = Modifier
-                                    .widthIn(max = cardMaxWidth)
-                                    .fillMaxWidth()
-                                    .then(positioningModifier)
-                            ) {
+                            Box(modifier = Modifier.widthIn(max = cardMaxWidth).fillMaxWidth().then(positioningModifier)) {
                                 WalletCard(
                                     account = acc,
                                     modifier = Modifier
@@ -390,19 +532,17 @@ fun HomeScreen(
                 .fillMaxWidth()
                 .height(130.dp)
                 .background(
-                    Brush.verticalGradient(
-                        0.0f to backgroundColor,
-                        0.65f to backgroundColor,
-                        1.0f to Color.Transparent
-                    )
+                    Brush.verticalGradient(0.0f to backgroundColor, 0.65f to backgroundColor, 1.0f to Color.Transparent)
                 )
                 .padding(top = 24.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 24.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.Start,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                DoleLogo(contentDescription = "DOLE", modifier = Modifier.size(32.dp), onClick = onLogoTap)
+                Spacer(Modifier.width(12.dp))
                 Text(
                     text = "Wallet",
                     style = MaterialTheme.typography.headlineMedium,
@@ -412,4 +552,223 @@ fun HomeScreen(
             }
         }
     }
+}
+
+@Composable
+private fun NetworkHistoryPane(
+    transactions: List<DisplayTransaction>,
+    accounts: List<NetworkAccountSummary>,
+    nameResolver: (String) -> String?,
+    onNotify: (String) -> Unit
+) {
+    val visibleTxs = remember(transactions) { transactions.filter { it.tx !is GenesisTransaction } }
+    val clipboard = rememberAppClipboard()
+
+    fun copyId(id: String) {
+        clipboard.copy(id)
+        onNotify("Copied to clipboard")
+    }
+
+    fun displayName(id: String): String = nameResolver(id) ?: "...${id.takeLast(6)}"
+
+    var query by remember { mutableStateOf("") }
+    var selectedAccountId by remember { mutableStateOf<String?>(null) }
+
+    val selectedAccount = selectedAccountId?.let { id -> accounts.find { it.id == id } }
+
+    val shownTxs = remember(visibleTxs, selectedAccount) {
+        val sel = selectedAccount ?: return@remember visibleTxs
+        visibleTxs.filter { it.tx.author == sel.id || (it.tx as? SendTransaction)?.target == sel.id }
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
+        contentPadding = PaddingValues(bottom = 24.dp)
+    ) {
+        item(key = "header") {
+            Text(
+                text = "History",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 48.dp, bottom = 16.dp)
+            )
+        }
+
+        item(key = "search") {
+            Box(Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp)) {
+                AccountSearchField(
+                    query = query,
+                    onQueryChange = {
+                        query = it
+                        selectedAccountId = null
+                    },
+                    accounts = accounts,
+                    displayName = ::displayName,
+                    onAccountSelected = { account ->
+                        selectedAccountId = account.id
+                        query = displayName(account.id)
+                    }
+                )
+            }
+        }
+
+        if (selectedAccount != null) {
+            item(key = "account-detail") {
+                Box(Modifier.animateItem().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    AccountDetailCard(account = selectedAccount, onCopy = ::copyId)
+                }
+            }
+        }
+
+        item(key = "tx-title") {
+            Text(
+                text = if (selectedAccount != null) "Transactions" else "All Transactions",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.animateItem().padding(horizontal = 24.dp, vertical = 4.dp)
+            )
+        }
+
+        if (shownTxs.isEmpty()) {
+            item(key = "empty") {
+                Box(Modifier.animateItem().fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                    Text("No transactions on the network yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        } else {
+            items(shownTxs, key = { it.tx.id }) { item ->
+                Box(Modifier.animateItem().padding(horizontal = 16.dp, vertical = 4.dp)) {
+                    GlobalTransactionRow(item = item, onCopy = ::copyId)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AccountSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    accounts: List<NetworkAccountSummary>,
+    displayName: (String) -> String,
+    onAccountSelected: (NetworkAccountSummary) -> Unit
+) {
+    var isDropdownExpanded by remember { mutableStateOf(false) }
+    var fieldSize by remember { mutableStateOf(Size.Zero) }
+
+    val matches = remember(query, accounts) {
+        if (query.isBlank()) {
+            accounts
+        } else {
+            accounts.filter { account ->
+                displayName(account.id).contains(query, ignoreCase = true) || account.id.contains(query, ignoreCase = true)
+            }
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        AppTextField(
+            value = query,
+            onValueChange = {
+                onQueryChange(it)
+                isDropdownExpanded = true
+            },
+            placeholder = "Search account (name or ID)",
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+            trailingIcon = {
+                if (query.isNotEmpty()) {
+                    AdaptiveIconButton(
+                        onClick = { onQueryChange(""); isDropdownExpanded = false },
+                        colors = IconButtonDefaults.iconButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant)
+                    ) {
+                        Icon(Icons.Default.Close, "Clear")
+                    }
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth().onGloballyPositioned { fieldSize = it.size.toSize() },
+            singleLine = true
+        )
+
+        if (isDropdownExpanded && query.isNotBlank() && matches.isNotEmpty()) {
+            DropdownMenu(
+                expanded = true,
+                onDismissRequest = { isDropdownExpanded = false },
+                modifier = Modifier
+                    .width(with(LocalDensity.current) { fieldSize.width.toDp() })
+                    .heightIn(max = 240.dp)
+                    .background(MaterialTheme.colorScheme.surface),
+                properties = PopupProperties(focusable = false)
+            ) {
+                matches.forEach { account ->
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                FrontEllipsizedText(
+                                    text = account.id,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                account.name?.let {
+                                    Text(
+                                        text = it,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        },
+                        onClick = {
+                            onAccountSelected(account)
+                            isDropdownExpanded = false
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AccountDetailCard(account: NetworkAccountSummary, onCopy: (String) -> Unit) {
+    EntryRow(
+        title = account.id,
+        titleEllipsized = true,
+        onTitleClick = { onCopy(account.id) },
+        subtitle = account.name?.let { name -> { TransactionPlainSubtitle(name) } },
+        trailing = { TransactionAmount("${account.balance}", MaterialTheme.colorScheme.onSurface) }
+    )
+}
+
+@Composable
+private fun GlobalTransactionRow(item: DisplayTransaction, onCopy: (String) -> Unit) {
+    val tx = item.tx
+    val (icon, iconTint, title) = when (tx) {
+        is MintTransaction -> Triple(Icons.Default.Add, Color.Green, "Mint")
+        is BurnTransaction -> Triple(Icons.Default.Remove, Color.Red, "Burn")
+        is SendTransaction -> Triple(Icons.AutoMirrored.Filled.Send, DoleBlue, "Send")
+        else -> return
+    }
+
+    EntryRow(
+        title = title,
+        icon = icon,
+        iconTint = iconTint,
+        timestamp = formatTransactionTimestamp(tx.timestamp),
+        subtitle = when (tx) {
+            is SendTransaction -> ({
+                TransactionPeerPairSubtitle(
+                    fromId = tx.author,
+                    toId = tx.target,
+                    onFromClick = { onCopy(tx.author) },
+                    onToClick = { onCopy(tx.target) }
+                )
+            })
+            else -> ({ TransactionPeerSubtitle(id = tx.author, onClick = { onCopy(tx.author) }) })
+        },
+        trailing = { TransactionAmount("${item.delta}", iconTint) }
+    )
 }

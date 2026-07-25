@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -16,6 +17,7 @@ import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
+import javax.crypto.spec.IvParameterSpec
 import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -25,6 +27,8 @@ class AndroidSecureStorage(private val activity: FragmentActivity) : SecureStora
     override val isBiometricSupported: Boolean = true
     private val sharedPrefs = activity.getSharedPreferences("dole_secure_prefs", Context.MODE_PRIVATE)
     private val keyAlias = "dole_biometric_key_v2"
+
+    private class DecryptSession(val cipher: Cipher, val encryptedBytes: ByteArray)
 
     override fun hasSavedPin(accountId: String): Boolean {
         return sharedPrefs.contains("iv_$accountId") && sharedPrefs.contains("enc_$accountId")
@@ -45,40 +49,29 @@ class AndroidSecureStorage(private val activity: FragmentActivity) : SecureStora
     }
 
     override suspend fun getPinSecurely(accountId: String): String? {
-        if (!hasSavedPin(accountId)) return null
-        val encryptedBytes = Base64.decode(sharedPrefs.getString("enc_$accountId", null) ?: return null, Base64.DEFAULT)
-        val iv = Base64.decode(sharedPrefs.getString("iv_$accountId", null) ?: return null, Base64.DEFAULT)
-
-        val cipher = getCipher()
-        cipher.init(Cipher.DECRYPT_MODE, getOrCreateSecretKey(), javax.crypto.spec.IvParameterSpec(iv))
-
+        val session = prepareDecryption(accountId) ?: return null
         return try {
-            String(cipher.doFinal(encryptedBytes), Charsets.UTF_8)
+            String(session.cipher.doFinal(session.encryptedBytes), Charsets.UTF_8)
         } catch (_: Exception) {
             null
         }
     }
 
     override suspend fun getPinWithBiometrics(accountId: String): String? {
-        if (!hasSavedPin(accountId)) return null
-        val encryptedBytes = Base64.decode(sharedPrefs.getString("enc_$accountId", null) ?: return null, Base64.DEFAULT)
-        val iv = Base64.decode(sharedPrefs.getString("iv_$accountId", null) ?: return null, Base64.DEFAULT)
-
-        val cipher = getCipher()
-        cipher.init(Cipher.DECRYPT_MODE, getOrCreateSecretKey(), javax.crypto.spec.IvParameterSpec(iv))
+        val session = prepareDecryption(accountId) ?: return null
 
         return withContext(Dispatchers.Main) {
             suspendCancellableCoroutine { continuation ->
                 val promptInfo = BiometricPrompt.PromptInfo.Builder()
                     .setTitle("Login to Dole Wallet")
-                    .setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+                    .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
                     .build()
 
                 val biometricPrompt = BiometricPrompt(activity, ContextCompat.getMainExecutor(activity),
                     object : BiometricPrompt.AuthenticationCallback() {
                         override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                             try {
-                                val decryptedBytes = result.cryptoObject?.cipher?.doFinal(encryptedBytes)
+                                val decryptedBytes = result.cryptoObject?.cipher?.doFinal(session.encryptedBytes)
                                 continuation.resume(decryptedBytes?.let { String(it, Charsets.UTF_8) })
                             } catch (_: Exception) { continuation.resume(null) }
                         }
@@ -87,7 +80,7 @@ class AndroidSecureStorage(private val activity: FragmentActivity) : SecureStora
                         }
                     })
 
-                biometricPrompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(cipher))
+                biometricPrompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(session.cipher))
             }
         }
     }
@@ -97,6 +90,14 @@ class AndroidSecureStorage(private val activity: FragmentActivity) : SecureStora
             remove("enc_$accountId")
             remove("iv_$accountId")
         }
+    }
+
+    private fun prepareDecryption(accountId: String): DecryptSession? {
+        val encoded = sharedPrefs.getString("enc_$accountId", null) ?: return null
+        val ivEncoded = sharedPrefs.getString("iv_$accountId", null) ?: return null
+        val cipher = getCipher()
+        cipher.init(Cipher.DECRYPT_MODE, getOrCreateSecretKey(), IvParameterSpec(Base64.decode(ivEncoded, Base64.DEFAULT)))
+        return DecryptSession(cipher, Base64.decode(encoded, Base64.DEFAULT))
     }
 
     private fun getCipher(): Cipher = Cipher.getInstance("${KeyProperties.KEY_ALGORITHM_AES}/${KeyProperties.BLOCK_MODE_CBC}/${KeyProperties.ENCRYPTION_PADDING_PKCS7}")
@@ -119,8 +120,7 @@ class AndroidSecureStorage(private val activity: FragmentActivity) : SecureStora
 @Composable
 actual fun rememberSecureStorage(): SecureStorage {
     val context = LocalContext.current
-    val activity = context as? FragmentActivity
-        ?: throw IllegalStateException("Activity must be a FragmentActivity for Biometrics")
+    val activity = context as? FragmentActivity ?: throw IllegalStateException("Activity must be a FragmentActivity for Biometrics")
 
     return remember(activity) { AndroidSecureStorage(activity) }
 }

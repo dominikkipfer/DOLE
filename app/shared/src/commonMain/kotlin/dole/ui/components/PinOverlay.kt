@@ -18,6 +18,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dole.ui.metrics.CardLayoutMetrics
@@ -31,11 +33,34 @@ fun PinOverlay(
     metrics: CardLayoutMetrics,
     hideDots: Boolean = false
 ) {
-    val defaultColor = Color.Black
-    val errorColor = MaterialTheme.colorScheme.error
+    PinStatusDisplay(
+        title = title,
+        pinLength = pinLength,
+        isError = isError,
+        shakeOffset = shakeOffset,
+        textSize = metrics.overlayTextSize,
+        dotSize = metrics.overlayDotSize,
+        spacing = metrics.overlaySpacing,
+        contentColor = Color.Black,
+        hideDots = hideDots
+    )
+}
 
-    val contentColor = if (isError) errorColor else defaultColor
-    val titleColor = if (isError) errorColor else defaultColor.copy(alpha = 0.85f)
+@Composable
+fun PinStatusDisplay(
+    title: String,
+    pinLength: Int,
+    isError: Boolean,
+    shakeOffset: Float,
+    textSize: TextUnit,
+    dotSize: Dp,
+    spacing: Dp,
+    contentColor: Color,
+    hideDots: Boolean = false
+) {
+    val errorColor = MaterialTheme.colorScheme.error
+    val dotColor = if (isError) errorColor else contentColor
+    val titleColor = if (isError) errorColor else contentColor.copy(alpha = 0.85f)
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -45,22 +70,19 @@ fun PinOverlay(
         Text(
             text = title,
             color = titleColor,
-            fontSize = metrics.overlayTextSize,
+            fontSize = textSize,
             fontWeight = FontWeight.ExtraBold,
             letterSpacing = 2.sp
         )
 
         if (!hideDots) {
-            Spacer(Modifier.height(metrics.overlaySpacing))
+            Spacer(Modifier.height(spacing))
 
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(metrics.overlayDotSize),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(dotSize), verticalAlignment = Alignment.CenterVertically) {
                 repeat(4) { i ->
                     Box(
-                        modifier = Modifier.size(metrics.overlayDotSize).background(
-                            color = if (i < pinLength) contentColor else contentColor.copy(alpha = 0.2f),
+                        modifier = Modifier.size(dotSize).background(
+                            color = if (i < pinLength) dotColor else dotColor.copy(alpha = 0.2f),
                             shape = CircleShape
                         )
                     )

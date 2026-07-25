@@ -8,6 +8,7 @@ use crate::crypto::{person_id_hex_from_id_or_pubkey_hex, verify_genesis_tx};
 use crate::sync::{TxHeader, type_from_tx_label};
 
 pub(super) const RECOVERY_ID_HEADER: &str = "dole-recovery-id";
+pub(super) const GENESIS_REF_PREFIX: &str = "refs/dole-genesis/";
 
 pub(super) struct CommitInput<'a> {
     pub(super) branch: &'a str,
@@ -98,20 +99,15 @@ pub(super) fn target_for_commit(tx_t: &str, target: &str) -> String {
 }
 
 pub(super) fn get_pubkey_from_genesis(repo: &gix::Repository, branch: &str) -> Option<String> {
+    if let Some(public_key) = genesis_pubkey_from_ref(repo, branch) {
+        return Some(public_key);
+    }
+
     let mut found = None;
     for_each_commit(repo, branch, |_id, commit| {
-        if let Ok(decoded) = commit.decode()
-            && let Ok(author_sig) = decoded.author()
-            && author_sig.name.to_str_lossy() == "G"
-            && let Ok(committer_sig) = decoded.committer()
-        {
-            let public_key = author_sig.email.to_str_lossy();
-            let cert = committer_sig.name.to_str_lossy();
-            let sig = committer_sig.email.to_str_lossy();
-            if verify_genesis_tx(public_key.as_ref(), sig.as_ref(), cert.as_ref()) {
-                found = Some(public_key.into_owned());
-                return ControlFlow::Break(());
-            }
+        if let Some(public_key) = genesis_pubkey_from_commit(commit) {
+            found = Some(public_key);
+            return ControlFlow::Break(());
         }
         ControlFlow::Continue(())
     });
@@ -119,35 +115,25 @@ pub(super) fn get_pubkey_from_genesis(repo: &gix::Repository, branch: &str) -> O
     found
 }
 
-pub(super) fn get_last_goc(repo: &gix::Repository, branch: &str, tx_type: &str, target_filter: Option<&str>) -> u64 {
-    let mut latest: Option<(u64, u64)> = None;
-    for_each_commit(repo, branch, |_id, commit| {
-        if let Ok(decoded) = commit.decode()
-            && let Ok(author_sig) = decoded.author()
-            && author_sig.name.to_str_lossy() == tx_type
-        {
-            let target_matches = match target_filter {
-                Some(target_filter) => decoded
-                    .committer()
-                    .map(|committer_sig| {
-                        committer_sig.name.to_str_lossy().eq_ignore_ascii_case(target_filter)
-                    })
-                    .unwrap_or(false),
-                None => true
-            };
+fn genesis_pubkey_from_ref(repo: &gix::Repository, branch: &str) -> Option<String> {
+    let ref_name = format!("{GENESIS_REF_PREFIX}{branch}");
+    let reference = repo.find_reference(ref_name.as_str()).ok()?;
+    let commit = repo.find_object(reference.id().detach()).ok()?.try_into_commit().ok()?;
+    genesis_pubkey_from_commit(&commit)
+}
 
-            if target_matches
-                && let Ok(seq) = u64::try_from(author_sig.seconds())
-                && let Ok(val) = author_sig.email.to_str_lossy().parse::<u64>()
-                && latest.is_none_or(|(best_seq, _)| seq > best_seq)
-            {
-                latest = Some((seq, val));
-            }
-        }
-        ControlFlow::Continue(())
-    });
-
-    latest.map(|(_, val)| val).unwrap_or(0)
+fn genesis_pubkey_from_commit(commit: &gix::Commit<'_>) -> Option<String> {
+    let decoded = commit.decode().ok()?;
+    let author_sig = decoded.author().ok()?;
+    if author_sig.name.to_str_lossy() != "G" {
+        return None;
+    }
+    let committer_sig = decoded.committer().ok()?;
+    let public_key = author_sig.email.to_str_lossy();
+    let cert = committer_sig.name.to_str_lossy();
+    let sig = committer_sig.email.to_str_lossy();
+    verify_genesis_tx(public_key.as_ref(), sig.as_ref(), cert.as_ref())
+        .then(|| public_key.into_owned())
 }
 
 pub(super) fn write_commit(repo: &gix::Repository, input: CommitInput<'_>) -> Result<String, String> {
@@ -220,7 +206,41 @@ pub(super) fn write_commit(repo: &gix::Repository, input: CommitInput<'_>) -> Re
     };
 
     repo.edit_reference(edit).map_err(|e| e.to_string())?;
+
+    if tx_t == "G" {
+        write_genesis_ref(repo, branch, id);
+    }
+
     Ok(id.to_hex().to_string())
+}
+
+fn write_genesis_ref(repo: &gix::Repository, branch: &str, genesis_id: gix::ObjectId) {
+    let ref_name = format!("{GENESIS_REF_PREFIX}{branch}");
+    let name: gix::refs::FullName = match ref_name.as_str().try_into() {
+        Ok(name) => name,
+        Err(e) => {
+            log::warn!(target: "dole::ledger", "genesis ref name invalid for {branch}: {e:?}");
+            return;
+        }
+    };
+
+    let edit = gix::refs::transaction::RefEdit {
+        change: gix::refs::transaction::Change::Update {
+            log: gix::refs::transaction::LogChange {
+                mode: gix::refs::transaction::RefLog::AndReference,
+                force_create_reflog: false,
+                message: "genesis".into()
+            },
+            expected: gix::refs::transaction::PreviousValue::Any,
+            new: gix::refs::Target::Object(genesis_id)
+        },
+        name,
+        deref: false
+    };
+
+    if let Err(e) = repo.edit_reference(edit) {
+        log::warn!(target: "dole::ledger", "failed to write genesis ref for {branch}: {e}");
+    }
 }
 
 pub(super) fn get_latest_seq_for_branch(repo: &gix::Repository, branch: &str) -> Option<u64> {

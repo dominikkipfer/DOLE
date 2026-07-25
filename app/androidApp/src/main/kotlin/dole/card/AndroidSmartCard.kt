@@ -120,4 +120,12 @@ class AndroidSmartCard(var tag: Tag? = null) : SmartCard {
     override val pinRetries: Int get() = transmit(Constants.OP_GET_STATUS.toInt(), null).let {
         if (it.size > 3) it[3].toInt() else 3
     }
+
+    override val pinEpoch: Int get() = readPinEpoch(transmit(Constants.OP_GET_STATUS.toInt(), null))
+
+    override fun secureState(): CardSecureState? = try {
+        readSecureState(transmit(Constants.OP_GET_SECURE_STATUS.toInt(), null))
+    } catch (_: Exception) {
+        null
+    }
 }

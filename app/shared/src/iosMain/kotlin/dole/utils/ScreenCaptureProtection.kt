@@ -27,7 +27,6 @@ actual object ScreenCaptureProtection {
         val canvas = field.layer.sublayers?.lastOrNull() as? CALayer
         if (canvas == null) {
             field.removeFromSuperview()
-            println("ScreenCaptureProtection: secure canvas layer unavailable")
             return null
         }
 
@@ -38,6 +37,5 @@ actual object ScreenCaptureProtection {
         return field
     }
 
-    private fun keyWindow(): UIWindow? =
-        UIApplication.sharedApplication.connectedScenes.filterIsInstance<UIWindowScene>().firstOrNull()?.keyWindow
+    private fun keyWindow(): UIWindow? = UIApplication.sharedApplication.connectedScenes.filterIsInstance<UIWindowScene>().firstOrNull()?.keyWindow
 }

@@ -56,7 +56,7 @@ pub(crate) fn session_secret_key() -> SecretKey {
 }
 
 pub(crate) fn get_session_id() -> SessionId {
-    SessionId::from_endpoint_id(SESSION_SECRET_KEY.public())
+    SessionId::from_endpoint_id(session_secret_key().public())
 }
 
 fn generate_secret_key() -> SecretKey {

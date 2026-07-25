@@ -1,6 +1,6 @@
 use iroh::{
-    Endpoint, EndpointAddr, EndpointId, Watcher,
-    address_lookup::{EndpointData, EndpointInfo, memory::MemoryLookup},
+    Endpoint, EndpointAddr, EndpointId, RelayMode, Watcher,
+    address_lookup::{DnsAddressLookup, EndpointData, EndpointInfo, memory::MemoryLookup},
     endpoint::presets,
     protocol::Router
 };
@@ -8,24 +8,46 @@ use iroh_gossip::{Gossip, TopicId, api::{Event as GossipEvent, GossipSender}};
 use n0_future::StreamExt;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use swarm_discovery::{Discoverer, IpClass, Peer};
 use tokio::sync::mpsc;
 
-use crate::constants::IROH_ENDPOINT_BIND_TIMEOUT_MS;
+use crate::constants::{
+    IROH_ENDPOINT_BIND_TIMEOUT_MS, IROH_GOSSIP_TOPIC_BYTES, IROH_HUB_DIRECTORY_TIMEOUT_MS,
+    IROH_HUB_DIRECTORY_URL
+};
 
-use super::session::SessionId;
+use super::session::{SessionId, session_secret_key};
+use super::{set_internet_active, set_iroh_active};
 
 const SERVICE_NAME: &str = "dole";
 const BIND_TIMEOUT: Duration = Duration::from_millis(IROH_ENDPOINT_BIND_TIMEOUT_MS as u64);
+const DIRECTORY_TIMEOUT: Duration = Duration::from_millis(IROH_HUB_DIRECTORY_TIMEOUT_MS as u64);
 
-const TOPIC_BYTES: [u8; 32] = [
-    0xDA, 0x01, 0xED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-];
+static INTERNET_ENABLED: AtomicBool = AtomicBool::new(true);
+static IROH_DISCOVERY_ENABLED: AtomicBool = AtomicBool::new(true);
+
+pub(crate) fn set_iroh_discovery_enabled(enabled: bool) {
+    IROH_DISCOVERY_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+fn is_iroh_enabled() -> bool {
+    IROH_DISCOVERY_ENABLED.load(Ordering::Relaxed)
+}
+
+pub(crate) fn set_internet_enabled_flag(enabled: bool) {
+    INTERNET_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+pub(crate) fn is_internet_enabled() -> bool {
+    INTERNET_ENABLED.load(Ordering::Relaxed)
+}
 
 pub enum Command {
-    Broadcast(Vec<u8>)
+    Broadcast(Vec<u8>),
+    SetDiscovery(bool),
+    SetRelay(bool)
 }
 
 pub enum Event {
@@ -66,28 +88,28 @@ pub async fn run(
     };
 
     let local_endpoint_id = endpoint.id();
-    let Discovery {
-        guard: discovery_guard,
-        events: mut discovery_events,
-        memory_lookup,
-        advertised_addrs
-    } = match start_discovery(&endpoint) {
-        Ok(discovery) => discovery,
-        Err(e) => {
-            let _ = event_tx.send(Event::TransportError(format!(
-                "could not start mDNS discovery: {e}"
-            )));
-            return;
+    let mut discovery: Option<Discovery> = None;
+    if is_iroh_enabled() {
+        match start_discovery(&endpoint) {
+            Ok(started) => {
+                discovery = Some(started);
+                set_iroh_active(true);
+            }
+            Err(e) => {
+                let _ = event_tx.send(Event::TransportError(format!(
+                    "could not start mDNS discovery: {e}"
+                )));
+            }
         }
-    };
-    let mut advertised_addrs = advertised_addrs;
+    }
     let mut addr_stream = endpoint.watch_addr().stream();
+    let mut relay_status_stream = endpoint.home_relay_status().stream();
 
     let gossip = Gossip::builder().spawn(endpoint.clone());
     let max_message_size = gossip.max_message_size();
     let router = Router::builder(endpoint.clone()).accept(iroh_gossip::ALPN, gossip.clone()).spawn();
 
-    let topic_id = TopicId::from_bytes(TOPIC_BYTES);
+    let topic_id = TopicId::from_bytes(IROH_GOSSIP_TOPIC_BYTES);
     let (gossip_sender, mut gossip_receiver) = match gossip.subscribe(topic_id, vec![]).await {
         Ok(subscription) => subscription.split(),
         Err(e) => {
@@ -97,6 +119,12 @@ pub async fn run(
             return;
         }
     };
+
+    if !is_internet_enabled() {
+        apply_internet_transport(&endpoint, false).await;
+    }
+
+    spawn_directory_bootstrap(gossip_sender.clone());
 
     let _ = event_tx.send(Event::Ready {
         endpoint_id: local_endpoint_id,
@@ -110,6 +138,8 @@ pub async fn run(
     loop {
         tokio::select! {
             _ = shutdown_rx.recv() => {
+                set_internet_active(false);
+                set_iroh_active(false);
                 let _ = gossip.shutdown().await;
                 let _ = router.shutdown().await;
                 break;
@@ -119,6 +149,34 @@ pub async fn run(
                 match command {
                     Command::Broadcast(payload) => {
                         broadcast(&gossip_sender, payload, &event_tx).await;
+                    }
+                    Command::SetDiscovery(enabled) => {
+                        set_iroh_discovery_enabled(enabled);
+                        if enabled && discovery.is_none() {
+                            match start_discovery(&endpoint) {
+                                Ok(started) => {
+                                    discovery = Some(started);
+                                    set_iroh_active(true);
+                                    log::info!(target: "dole::mdns", "mDNS discovery enabled");
+                                }
+                                Err(e) => {
+                                    let _ = event_tx.send(Event::TransportError(format!(
+                                        "could not start mDNS discovery: {e}"
+                                    )));
+                                }
+                            }
+                        } else if !enabled && discovery.take().is_some() {
+                            set_iroh_active(false);
+                            joined_peers.clear();
+                            discovered_peers.clear();
+                            log::info!(target: "dole::mdns", "mDNS discovery disabled");
+                        }
+                    }
+                    Command::SetRelay(enabled) => {
+                        apply_internet_transport(&endpoint, enabled).await;
+                        if enabled {
+                            spawn_directory_bootstrap(gossip_sender.clone());
+                        }
                     }
                 }
             }
@@ -154,7 +212,12 @@ pub async fn run(
                 }
             }
 
-            Some(event) = discovery_events.recv() => {
+            Some(event) = async {
+                match discovery.as_mut() {
+                    Some(active) => active.events.recv().await,
+                    None => None
+                }
+            }, if discovery.is_some() => {
                 match event {
                     DiscoveryEvent::Discovered(peer) => {
                         let endpoint_id = peer.endpoint_info.endpoint_id;
@@ -171,7 +234,9 @@ pub async fn run(
                         }
 
                         if should_join_peer(local_endpoint_id, endpoint_id, &connected_peers, &joined_peers) {
-                            memory_lookup.add_endpoint_info(peer.endpoint_info);
+                            if let Some(active) = discovery.as_ref() {
+                                active.memory_lookup.add_endpoint_info(peer.endpoint_info);
+                            }
                             joined_peers.insert(endpoint_id);
                             log::info!(
                                 target: "dole::mdns",
@@ -197,7 +262,9 @@ pub async fn run(
                             "mDNS discovery expired endpoint={}",
                             endpoint_id.fmt_short()
                         );
-                        memory_lookup.remove_endpoint_info(endpoint_id);
+                        if let Some(active) = discovery.as_ref() {
+                            active.memory_lookup.remove_endpoint_info(endpoint_id);
+                        }
                         joined_peers.remove(&endpoint_id);
                         discovered_peers.remove(&endpoint_id);
                         let _ = event_tx.send(Event::PeerExpired { endpoint_id });
@@ -205,20 +272,90 @@ pub async fn run(
                 }
             }
 
+            Some(relay_status) = relay_status_stream.next() => {
+                let online = relay_status.iter().any(|relay| relay.is_connected());
+                set_internet_active(online);
+            }
+
             Some(endpoint_addr) = addr_stream.next() => {
-                replace_advertised_mdns_addrs(
-                    &discovery_guard,
-                    &mut advertised_addrs,
-                    endpoint_addr_mdns_addrs(&endpoint_addr)
-                );
+                if let Some(active) = discovery.as_mut() {
+                    let next = endpoint_addr_mdns_addrs(&endpoint_addr);
+                    replace_advertised_mdns_addrs(&active.guard, &mut active.advertised_addrs, next);
+                }
             }
         }
     }
 }
 
+async fn fetch_hub_directory() -> Option<String> {
+    let url = IROH_HUB_DIRECTORY_URL.trim();
+    if url.is_empty() {
+        return None;
+    }
+    let request = async { reqwest::get(url).await.ok()?.text().await.ok() };
+    tokio::time::timeout(DIRECTORY_TIMEOUT, request).await.ok().flatten()
+}
+
+async fn apply_internet_transport(endpoint: &Endpoint, enabled: bool) {
+    let relay_map = RelayMode::Default.relay_map();
+    for url in relay_map.urls::<Vec<_>>() {
+        if enabled {
+            if let Some(config) = relay_map.get(&url) {
+                endpoint.insert_relay(url, config).await;
+            }
+        } else {
+            endpoint.remove_relay(&url).await;
+        }
+    }
+    if !enabled {
+        set_internet_active(false);
+    }
+    log::info!(
+        target: "dole::mdns",
+        "internet transport {}",
+        if enabled { "enabled" } else { "disabled, staying on the local network" }
+    );
+}
+
+fn spawn_directory_bootstrap(sender: GossipSender) {
+    tokio::spawn(async move {
+        let ids = bootstrap_endpoint_ids().await;
+        if !ids.is_empty()
+            && let Err(e) = sender.join_peers(ids).await
+        {
+            log::warn!(target: "dole::mdns", "could not join hub directory peers: {e:?}");
+        }
+    });
+}
+
+async fn bootstrap_endpoint_ids() -> Vec<EndpointId> {
+    if !is_internet_enabled() {
+        return Vec::new();
+    }
+
+    let Some(directory) = fetch_hub_directory().await else {
+        log::warn!(target: "dole::mdns", "hub directory unavailable, falling back to mDNS only");
+        return Vec::new();
+    };
+
+    let me = session_secret_key().public();
+    let ids: Vec<EndpointId> = directory
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(|line| line.parse::<EndpointId>().ok())
+        .filter(|id| *id != me)
+        .collect();
+
+    log::info!(target: "dole::mdns", "hub directory bootstrap peers={}", ids.len());
+    ids
+}
+
 async fn bind_endpoint() -> Result<Endpoint, String> {
     let builder = Endpoint::builder(presets::Minimal)
-        .secret_key(super::session::session_secret_key())
+        .relay_mode(RelayMode::Default)
+        .address_lookup(DnsAddressLookup::n0_dns())
+        .secret_key(session_secret_key())
         .bind_addr("0.0.0.0:0")
         .map_err(|e| format!("could not create iroh endpoint builder: {e}"))?;
 

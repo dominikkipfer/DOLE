@@ -117,7 +117,11 @@ class PCSmartCard : SmartCard {
             if (response.startsWith("OK:")) return response.substring(3)
             throw Exception("Protocol Error: $response")
         } catch (e: Exception) {
-            if (e.message?.contains(Constants.ERR_CARD_NOT_FOUND) != true) killService()
+            if (e.message?.contains(Constants.ERR_CARD_NOT_FOUND) == true) {
+                isConnectedInternal = false
+            } else {
+                killService()
+            }
             throw e
         }
     }
@@ -209,6 +213,16 @@ class PCSmartCard : SmartCard {
     override val pinRetries: Int get() {
         val data = transmitInternal(CommandAPDU(Constants.CLA_PROPRIETARY, Constants.OP_GET_STATUS.toInt(), 0x00, 0x00, 256))
         return if (data.size > 3) data[3].toInt() else 3
+    }
+
+    override val pinEpoch: Int get() =
+        readPinEpoch(transmitInternal(CommandAPDU(Constants.CLA_PROPRIETARY, Constants.OP_GET_STATUS.toInt(), 0x00, 0x00, 256)))
+
+    override fun secureState(): CardSecureState? = try {
+        val ins = Constants.OP_GET_SECURE_STATUS.toInt()
+        readSecureState(transmitInternal(CommandAPDU(Constants.CLA_PROPRIETARY, ins, 0x00, 0x00, 256)))
+    } catch (_: Exception) {
+        null
     }
 }
 

@@ -1,7 +1,6 @@
 package dole.ui.screens
 
 import androidx.compose.animation.AnimatedVisibilityScope
-import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
@@ -43,7 +42,6 @@ import dole.ui.metrics.rememberCardMetrics
 import dole.ui.metrics.rememberNumPadMetrics
 import dole.utils.rememberSecureStorage
 
-@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun AuthScreen(
     account: StoredAccount,

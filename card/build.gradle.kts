@@ -129,6 +129,9 @@ val tomlText = if (confFile.exists()) confFile.readText() else ""
 val appletAid = """APPLET_AID_HEX\s*=\s*"([A-Fa-f0-9]+)"""".toRegex().find(tomlText)?.groupValues?.get(1)
 val pkgAid = appletAid?.substring(0, 10)
 
+val ndefModuleAid = pkgAid?.plus("02")
+val ndefInstanceAid = "D2760000850101"
+
 val buildApplet = tasks.register("buildApplet") {
     group = "javacard"
 
@@ -152,6 +155,7 @@ val buildApplet = tasks.register("buildApplet") {
 
     val localPkgAid = pkgAid
     val localAppletAid = appletAid
+    val localNdefModuleAid = ndefModuleAid
     val localSources = "${project.projectDir}/src/main/java;${layout.buildDirectory.get().asFile.absolutePath}/generated/source/constants/java"
 
     doLast {
@@ -176,6 +180,7 @@ val buildApplet = tasks.register("buildApplet") {
                     "ints" to "true"
                 ) {
                     "applet"("class" to "card.Card", "aid" to localAppletAid)
+                    "applet"("class" to "card.Ndef", "aid" to localNdefModuleAid)
                 }
             }
         }
@@ -195,6 +200,7 @@ mapOf("Minter" to true, "User" to false).forEach { (type, isMinter) ->
         val capFileProvider = layout.buildDirectory.file("card.cap")
         val gpJarProvider = gpJar
         val params = if (isMinter) "C90101" else "C90100"
+        val walletAid = appletAid
 
         executable = "java"
 
@@ -203,8 +209,30 @@ mapOf("Minter" to true, "User" to false).forEach { (type, isMinter) ->
                 "-jar", gpJarProvider.get().asFile.absolutePath,
                 "-force",
                 "-install", capFileProvider.get().asFile.absolutePath,
+                "-applet", walletAid,
                 "-params", params,
                 "-default",
+                "-verbose"
+            )
+        })
+    }
+
+    val installNdefTask = tasks.register<Exec>("installNdef$type") {
+        dependsOn(installTask)
+
+        val gpJarProvider = gpJar
+        val localPkgAid = pkgAid
+        val localNdefModuleAid = ndefModuleAid
+        val localNdefInstanceAid = ndefInstanceAid
+
+        executable = "java"
+
+        argumentProviders.add(CommandLineArgumentProvider {
+            listOf(
+                "-jar", gpJarProvider.get().asFile.absolutePath,
+                "-package", localPkgAid,
+                "-applet", localNdefModuleAid,
+                "-create", localNdefInstanceAid,
                 "-verbose"
             )
         })
@@ -213,7 +241,7 @@ mapOf("Minter" to true, "User" to false).forEach { (type, isMinter) ->
     tasks.register<JavaExec>("setup$type") {
         group = "javacard"
         description = "Setup for $type"
-        dependsOn(installTask)
+        dependsOn(installNdefTask)
         classpath = toolSourceSet.runtimeClasspath
         mainClass.set("provisioner.Provisioner")
         standardInput = System.`in`

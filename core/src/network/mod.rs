@@ -5,7 +5,7 @@ mod queue;
 mod session;
 
 use std::collections::VecDeque;
-use std::sync::{Condvar, LazyLock, Mutex, atomic::{AtomicU8, Ordering}};
+use std::sync::{Condvar, LazyLock, Mutex, atomic::{AtomicBool, AtomicU8, Ordering}};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -22,7 +22,7 @@ use crate::sync::MessageKind;
 
 pub(crate) use queue::OutboundMessage;
 
-use peerbook::PeerBook;
+use peerbook::{PeerBook, clear_peer_snapshot};
 use queue::{TransportLimit, TransportQueue};
 use session::{SESSION_ID_BYTES, SessionId};
 
@@ -35,6 +35,10 @@ const RX_DEDUP_CACHE_LIMIT: usize = RX_DEDUP_LIMIT as usize;
 const BLE_TRANSPORT_TICK_BYTES: usize = 1;
 
 static BLE_INBOUND_TX: Mutex<Option<mpsc::UnboundedSender<InboundPayload>>> = Mutex::new(None);
+static IROH_ENABLED: AtomicBool = AtomicBool::new(true);
+static IROH_COMMAND_TX: Mutex<Option<mpsc::UnboundedSender<TransportToggle>>> = Mutex::new(None);
+static IROH_ACTIVE: AtomicBool = AtomicBool::new(false);
+static INTERNET_ACTIVE: AtomicBool = AtomicBool::new(false);
 static BLE_ADVERTISING_TICK: AtomicU8 = AtomicU8::new(0);
 static BLE_ADVERTISER_STATE: LazyLock<(Mutex<BleAdvertiserState>, Condvar)> = LazyLock::new(|| {
     (
@@ -49,6 +53,32 @@ static BLE_ADVERTISER_STATE: LazyLock<(Mutex<BleAdvertiserState>, Condvar)> = La
 struct BleAdvertiserState {
     active: bool,
     queue: TransportQueue
+}
+
+#[derive(uniffi::Record)]
+pub struct TransportStatus {
+    pub ble: bool,
+    pub iroh: bool,
+    pub internet: bool
+}
+
+#[uniffi::export]
+pub fn transport_status() -> TransportStatus {
+    let ble = BLE_ADVERTISER_STATE.0.lock().map(|state| state.active).unwrap_or(false)
+        && ble::advertising_active();
+    TransportStatus {
+        ble,
+        iroh: IROH_ACTIVE.load(Ordering::Relaxed),
+        internet: INTERNET_ACTIVE.load(Ordering::Relaxed)
+    }
+}
+
+pub(super) fn set_internet_active(active: bool) {
+    INTERNET_ACTIVE.store(active, Ordering::Relaxed);
+}
+
+pub(super) fn set_iroh_active(active: bool) {
+    IROH_ACTIVE.store(active, Ordering::Relaxed);
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -70,6 +100,52 @@ struct InboundPayload {
     transport: TransportKind,
     source: InboundSource,
     payload: Vec<u8>
+}
+
+struct IrohTransport {
+    command_tx: mpsc::UnboundedSender<mdns::Command>,
+    shutdown_tx: mpsc::UnboundedSender<()>
+}
+
+fn wants_iroh_endpoint() -> bool {
+    IROH_ENABLED.load(Ordering::Relaxed) || mdns::is_internet_enabled()
+}
+
+fn spawn_iroh_transport(event_tx: &mpsc::UnboundedSender<mdns::Event>) -> IrohTransport {
+    let (command_tx, command_rx) = mpsc::unbounded_channel();
+    let (shutdown_tx, shutdown_rx) = mpsc::unbounded_channel();
+    tokio::spawn(mdns::run(command_rx, event_tx.clone(), shutdown_rx));
+    IrohTransport {
+        command_tx,
+        shutdown_tx
+    }
+}
+
+#[derive(Clone, Copy)]
+enum TransportToggle {
+    Iroh(bool),
+    Internet(bool)
+}
+
+fn signal_transport_toggle(toggle: TransportToggle) {
+    if let Ok(guard) = IROH_COMMAND_TX.lock()
+        && let Some(tx) = guard.as_ref()
+    {
+        let _ = tx.send(toggle);
+    }
+}
+
+#[uniffi::export]
+pub fn set_iroh_enabled(enabled: bool) {
+    IROH_ENABLED.store(enabled, Ordering::Relaxed);
+    mdns::set_iroh_discovery_enabled(enabled);
+    signal_transport_toggle(TransportToggle::Iroh(enabled));
+}
+
+#[uniffi::export]
+pub fn set_internet_enabled(enabled: bool) {
+    mdns::set_internet_enabled_flag(enabled);
+    signal_transport_toggle(TransportToggle::Internet(enabled));
 }
 
 #[derive(Clone, Copy)]
@@ -129,11 +205,18 @@ async fn run_network(
     mut ble_inbound_rx: mpsc::UnboundedReceiver<InboundPayload>
 ) {
     let local_session_id = session::get_session_id();
-    let (iroh_tx, iroh_rx) = mpsc::unbounded_channel();
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
-    let (iroh_shutdown_tx, iroh_shutdown_rx) = mpsc::unbounded_channel();
 
-    tokio::spawn(mdns::run(iroh_rx, event_tx, iroh_shutdown_rx));
+    let (iroh_command_tx, mut iroh_command_rx) = mpsc::unbounded_channel::<TransportToggle>();
+    if let Ok(mut guard) = IROH_COMMAND_TX.lock() {
+        *guard = Some(iroh_command_tx);
+    }
+
+    let mut iroh: Option<IrohTransport> = if wants_iroh_endpoint() {
+        Some(spawn_iroh_transport(&event_tx))
+    } else {
+        None
+    };
 
     let mut peers = PeerBook::default();
     let mut rx_dedup = RxDedup::default();
@@ -149,9 +232,38 @@ async fn run_network(
     loop {
         tokio::select! {
             _ = shutdown_rx.recv() => {
-                let _ = iroh_shutdown_tx.send(());
+                if let Some(transport) = iroh.take() {
+                    let _ = transport.shutdown_tx.send(());
+                }
+                IROH_ACTIVE.store(false, Ordering::Relaxed);
+                set_internet_active(false);
                 clear_network_channels();
                 break;
+            }
+
+            Some(toggle) = iroh_command_rx.recv() => {
+                if wants_iroh_endpoint() {
+                    if iroh.is_none() {
+                        iroh = Some(spawn_iroh_transport(&event_tx));
+                        log::info!(target: LOG_TARGET, "iroh endpoint started");
+                    } else if let Some(transport) = iroh.as_ref() {
+                        let command = match toggle {
+                            TransportToggle::Iroh(enabled) => mdns::Command::SetDiscovery(enabled),
+                            TransportToggle::Internet(enabled) => mdns::Command::SetRelay(enabled)
+                        };
+                        let _ = transport.command_tx.send(command);
+                    }
+                    if let TransportToggle::Iroh(false) = toggle {
+                        peers.drop_iroh();
+                    }
+                } else if let Some(transport) = iroh.take() {
+                    let _ = transport.shutdown_tx.send(());
+                    max_iroh_message_bytes = None;
+                    IROH_ACTIVE.store(false, Ordering::Relaxed);
+                    set_internet_active(false);
+                    peers.drop_iroh();
+                    log::info!(target: LOG_TARGET, "iroh endpoint stopped");
+                }
             }
 
             _ = frontier_interval.tick() => {
@@ -172,7 +284,7 @@ async fn run_network(
                 enqueue_outbound_message(
                     message,
                     &mut iroh_queue,
-                    &iroh_tx,
+                    iroh.as_ref().map(|transport| &transport.command_tx),
                     max_iroh_message_bytes,
                     local_session_id,
                     peers.should_use_ble(),
@@ -194,7 +306,7 @@ async fn run_network(
                         request_frontier(&frontier_request_tx, "iroh-ready");
                         drain_iroh_queue(
                             &mut iroh_queue,
-                            &iroh_tx,
+                            iroh.as_ref().map(|transport| &transport.command_tx),
                             max_iroh_message_bytes,
                             local_session_id,
                             peers.iroh_count()
@@ -213,7 +325,7 @@ async fn run_network(
                         request_frontier(&frontier_request_tx, "iroh-peer-discovered");
                         drain_iroh_queue(
                             &mut iroh_queue,
-                            &iroh_tx,
+                            iroh.as_ref().map(|transport| &transport.command_tx),
                             max_iroh_message_bytes,
                             local_session_id,
                             peers.iroh_count()
@@ -242,7 +354,7 @@ async fn run_network(
                         request_frontier(&frontier_request_tx, "iroh-peer-connected");
                         drain_iroh_queue(
                             &mut iroh_queue,
-                            &iroh_tx,
+                            iroh.as_ref().map(|transport| &transport.command_tx),
                             max_iroh_message_bytes,
                             local_session_id,
                             peers.iroh_count()
@@ -284,7 +396,7 @@ fn request_frontier(frontier_request_tx: &mpsc::UnboundedSender<()>, reason: &'s
 fn enqueue_outbound_message(
     message: OutboundMessage,
     iroh_queue: &mut TransportQueue,
-    iroh_tx: &mpsc::UnboundedSender<mdns::Command>,
+    iroh_tx: Option<&mpsc::UnboundedSender<mdns::Command>>,
     max_iroh_message_bytes: Option<usize>,
     local_session_id: SessionId,
     use_ble: bool,
@@ -419,6 +531,7 @@ fn clear_network_channels() {
     if let Ok(mut guard) = BLE_INBOUND_TX.lock() {
         *guard = None;
     }
+    clear_peer_snapshot();
 }
 
 fn enqueue_ble_message(message: &OutboundMessage) {
@@ -575,11 +688,14 @@ fn next_ble_advertising_tick() -> u8 {
 
 fn drain_iroh_queue(
     queue: &mut TransportQueue,
-    iroh_tx: &mpsc::UnboundedSender<mdns::Command>,
+    iroh_tx: Option<&mpsc::UnboundedSender<mdns::Command>>,
     max_message_bytes: Option<usize>,
     local_session_id: SessionId,
     connected_peers: usize
 ) {
+    let Some(iroh_tx) = iroh_tx else {
+        return;
+    };
     let Some(max_payload_bytes) = max_message_bytes else {
         return;
     };

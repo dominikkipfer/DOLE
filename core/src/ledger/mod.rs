@@ -19,7 +19,7 @@ use crate::network::{self, OutboundMessage};
 use crate::sync::{decode_frontier_announcement, decode_transaction_batch, decode_tx_message, encode_tx_msg};
 use history::notify_ui_internal;
 use repo::{
-    CommitInput, branch_has_seq, contiguous_sequences, ensure_repo_initialized, get_last_goc,
+    CommitInput, branch_has_seq, contiguous_sequences, ensure_repo_initialized,
     get_latest_seq_for_branch, get_pubkey_from_genesis, target_for_commit, write_commit
 };
 use sync::{
@@ -158,6 +158,25 @@ pub fn start_global_sync(storage_path: String) {
 }
 
 #[uniffi::export]
+pub fn reset_ledger(storage_path: String) -> bool {
+    logging::init_logging();
+    let repo_path = PathBuf::from(&storage_path).join("dole_ledger");
+    let _guard = REPO_MUTEX.lock().unwrap();
+
+    if repo_path.exists()
+        && let Err(e) = std::fs::remove_dir_all(&repo_path)
+    {
+        log::error!(target: LEDGER_LOG_TARGET, "Failed to delete local ledger: {e}");
+        return false;
+    }
+
+    ensure_repo_initialized(&repo_path);
+    let cleared = gix::open(&repo_path).is_ok();
+    log::info!(target: LEDGER_LOG_TARGET, "Local ledger reset cleared={cleared}");
+    cleared
+}
+
+#[uniffi::export]
 pub fn stop_global_sync() {
     if let Ok(mut guard) = GLOBAL_SHUTDOWN_TX.lock()
         && let Some(tx) = guard.take()
@@ -289,37 +308,31 @@ impl Ledger {
             let _ = tx.send(OutboundMessage::Transactions(vec![msg]));
         }
 
-        self.handle_tx_result(&repo, res);
+        let _ = self.handle_tx_result(&repo, res);
     }
 
-    pub fn mint(&self, delta: i64, seq: i64, sig_hex: String) {
-        self.mint_burn(OP_MINT, delta, seq, sig_hex);
+    pub fn mint(&self, goc: i64, seq: i64, sig_hex: String) -> bool {
+        self.mint_burn(OP_MINT, goc, seq, sig_hex)
     }
 
-    pub fn burn(&self, delta: i64, seq: i64, sig_hex: String) {
-        self.mint_burn(OP_BURN, delta, seq, sig_hex);
+    pub fn burn(&self, goc: i64, seq: i64, sig_hex: String) -> bool {
+        self.mint_burn(OP_BURN, goc, seq, sig_hex)
     }
 
-    pub fn send(&self, target_pub_key: String, delta: i64, seq: i64, sig_hex: String) {
+    pub fn send(&self, target_pub_key: String, goc: i64, seq: i64, sig_hex: String) -> bool {
         let Some(seq) = card_seq_to_u64(seq) else {
-            return;
+            return false;
+        };
+        let Some(goc) = positive_i64_to_u64(goc) else {
+            return false;
         };
         let Ok(repo) = gix::open(&self.repo_path) else {
             self.fail("Send failed: ledger repository unavailable".into());
-            return;
-        };
-        let target_commit = target_for_commit("S", &target_pub_key);
-        let Some(amount) = positive_i64_to_u64(delta) else {
-            return;
-        };
-        let Some(goc) =
-            get_last_goc(&repo, &self.public_key_id, "S", Some(&target_commit)).checked_add(amount)
-        else {
-            return;
+            return false;
         };
         let Some(raw_sig_hex) = signature_hex_to_raw_hex(&sig_hex) else {
             self.fail("Send signature format invalid".into());
-            return;
+            return false;
         };
 
         if !verify_tx_signature(
@@ -331,7 +344,7 @@ impl Ledger {
             &raw_sig_hex
         ) {
             self.fail("Send signature verification failed".into());
-            return;
+            return false;
         }
 
         let res = self.commit_internal(
@@ -342,40 +355,36 @@ impl Ledger {
             seq,
             &raw_sig_hex
         );
-        self.handle_tx_result(&repo, res);
+        self.handle_tx_result(&repo, res)
     }
 }
 
 impl Ledger {
-    fn mint_burn(&self, tx_type: u8, delta: i64, seq: i64, sig_hex: String) {
+    fn mint_burn(&self, tx_type: u8, goc: i64, seq: i64, sig_hex: String) -> bool {
         let tx_t = match tx_type {
             OP_MINT => "M",
             OP_BURN => "B",
-            _ => return
+            _ => return false
         };
 
         let Some(seq) = card_seq_to_u64(seq) else {
-            return;
+            return false;
+        };
+        let Some(goc) = positive_i64_to_u64(goc) else {
+            return false;
         };
         let Ok(repo) = gix::open(&self.repo_path) else {
             self.fail(format!("{tx_t} failed: ledger repository unavailable"));
-            return;
-        };
-        let Some(amount) = positive_i64_to_u64(delta) else {
-            return;
-        };
-        let Some(goc) = get_last_goc(&repo, &self.public_key_id, tx_t, None).checked_add(amount)
-        else {
-            return;
+            return false;
         };
         let Some(raw_sig_hex) = signature_hex_to_raw_hex(&sig_hex) else {
             self.fail(format!("{tx_t} signature format invalid"));
-            return;
+            return false;
         };
 
         if self.public_key_full.is_empty() {
             self.fail(format!("{tx_t} failed: missing public key. Seq={seq}, GoC={goc}"));
-            return;
+            return false;
         }
 
         if !verify_tx_signature(
@@ -387,11 +396,11 @@ impl Ledger {
             &raw_sig_hex
         ) {
             self.fail(format!("{tx_t} signature verification failed. Seq={seq}, goc={goc}"));
-            return;
+            return false;
         }
 
         let res = self.commit_internal(&repo, tx_t, "", &goc.to_string(), seq, &raw_sig_hex);
-        self.handle_tx_result(&repo, res);
+        self.handle_tx_result(&repo, res)
     }
 
     fn fail(&self, message: String) {
@@ -399,14 +408,15 @@ impl Ledger {
         log::error!(target: LEDGER_LOG_TARGET, "{message}");
     }
 
-    fn handle_tx_result(&self, repo: &gix::Repository, res: GitResult) {
+    fn handle_tx_result(&self, repo: &gix::Repository, res: GitResult) -> bool {
         if !res.success {
             self.fail(res.message);
-            return;
+            return false;
         }
         if let Some(l) = &self.listener {
             notify_ui_internal(repo, &self.public_key_id, l);
         }
+        true
     }
 
     fn commit_internal(

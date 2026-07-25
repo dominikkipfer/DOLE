@@ -198,6 +198,10 @@ fn start_with_env(env: &mut Env<'_>, vm: &JavaVM, context: GlobalObject, storage
     Ok(true)
 }
 
+pub(super) fn is_advertising() -> bool {
+    STATE.lock().map(|state| state.active).unwrap_or(false)
+}
+
 pub(super) fn stop() {
     advertiser_stopped();
     let (vm, advertiser, advertising_callback, scanner, scan_callback) = {

@@ -1,9 +1,6 @@
 package dole.ui.screens
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibilityScope
-import androidx.compose.animation.ExperimentalSharedTransitionApi
-import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -23,16 +20,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -44,11 +41,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import com.mohamedrejeb.calf.ui.button.AdaptiveButton
+import com.mohamedrejeb.calf.ui.button.LiquidGlassButtonColors
+import com.mohamedrejeb.calf.ui.dialog.AdaptiveAlertDialog
+import com.mohamedrejeb.calf.ui.dialog.uikit.AlertDialogIosActionStyle
+import com.mohamedrejeb.calf.ui.progress.AdaptiveCircularProgressIndicator
 import dole.data.models.StoredAccount
 import dole.ui.components.AppBackHandler
 import dole.ui.components.AppButton
-import dole.ui.components.AppOutlinedButton
 import dole.ui.components.AppSwitchButton
 import dole.ui.components.AppTextButton
 import dole.ui.components.NameInputSection
@@ -61,7 +63,6 @@ import dole.ui.metrics.rememberCardMetrics
 import dole.ui.metrics.rememberNumPadMetrics
 import dole.ui.modifiers.pinInputHandler
 import dole.utils.ScreenCaptureProtection
-import dole.utils.rememberAppClipboard
 import dole.utils.rememberSecureStorage
 import dole.viewmodel.WalletViewModel
 import kotlinx.coroutines.delay
@@ -70,21 +71,15 @@ import kotlin.time.Duration.Companion.milliseconds
 
 private enum class SettingsStep { MENU, NAME, PIN_ENTER, PIN_CONFIRM, SUCCESS }
 
-@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
-fun SettingsScreen(
-    viewModel: WalletViewModel,
-    onBack: () -> Unit,
-    sharedTransitionScope: SharedTransitionScope,
-    animatedVisibilityScope: AnimatedVisibilityScope
-) {
+fun SettingsScreen(viewModel: WalletViewModel, onBack: () -> Unit) {
     var step by remember { mutableStateOf(SettingsStep.MENU) }
 
     var nameInput by remember { mutableStateOf(viewModel.currentName) }
     var pinInput by remember { mutableStateOf("") }
     var firstPin by remember { mutableStateOf<String?>(null) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
 
-    val clipboard = rememberAppClipboard()
     val secureStorage = rememberSecureStorage()
 
     var isError by remember { mutableStateOf(false) }
@@ -93,14 +88,6 @@ fun SettingsScreen(
     val focusRequester = remember { FocusRequester() }
 
     val isLoading = viewModel.isSettingsLoading
-
-    val previewAccount = remember(nameInput, viewModel.currentId) {
-        StoredAccount(
-            viewModel.currentId ?: "",
-            nameInput,
-            ""
-        )
-    }
 
     fun resetToMenu() {
         step = SettingsStep.MENU
@@ -153,8 +140,11 @@ fun SettingsScreen(
     }
 
     AppBackHandler {
-        if (!isLoading) {
-            if (step == SettingsStep.MENU) onBack() else if (step != SettingsStep.SUCCESS) resetToMenu()
+        if (isLoading) return@AppBackHandler
+        when (step) {
+            SettingsStep.MENU -> onBack()
+            SettingsStep.SUCCESS -> Unit
+            else -> resetToMenu()
         }
     }
 
@@ -162,9 +152,14 @@ fun SettingsScreen(
         if (step != SettingsStep.NAME) focusRequester.requestFocus()
     }
 
-    BoxWithConstraints(
+    val previewAccount = remember(nameInput, viewModel.currentId) {
+        StoredAccount(viewModel.currentId ?: "", nameInput.ifEmpty { viewModel.currentName }, "")
+    }
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
             .pinInputHandler(
                 focusRequester = focusRequester,
                 enabled = !isLoading && (step == SettingsStep.PIN_ENTER || step == SettingsStep.PIN_CONFIRM),
@@ -172,63 +167,106 @@ fun SettingsScreen(
                 onDelete = { if (pinInput.isNotEmpty()) pinInput = pinInput.dropLast(1) }
             )
     ) {
-        SplitLayout(
-            cardContent = {
-                with(sharedTransitionScope) {
+        AnimatedContent(
+            targetState = step,
+            label = "settings_step",
+            modifier = Modifier.fillMaxSize(),
+            transitionSpec = {
+                fadeIn(tween(400)) togetherWith fadeOut(tween(400))
+            }
+        ) { currentStep ->
+            when (currentStep) {
+                SettingsStep.MENU -> Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Settings",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp)
+                            .padding(top = 48.dp, bottom = 8.dp)
+                    )
+
                     BoxWithConstraints(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp)
                     ) {
-                        val metrics = rememberCardMetrics(maxWidth, maxHeight)
+                        val numPadMetrics = rememberNumPadMetrics(maxWidth, maxHeight)
 
-                        val heightBasedWidth = (maxHeight - 40.dp).coerceAtLeast(0.dp) * 1.586f
-                        val targetWidth = min(maxWidth * 1.1f, heightBasedWidth)
-
-                        Box(
-                            modifier = Modifier
-                                .width(targetWidth)
-                                .sharedBounds(
-                                    sharedContentState = rememberSharedContentState(key = "card-${viewModel.currentId}"),
-                                    animatedVisibilityScope = animatedVisibilityScope,
-                                    boundsTransform = { _, _ -> tween(500) },
-                                    renderInOverlayDuringTransition = false
-                                )
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(numPadMetrics.buttonSize * 0.25f),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            val title = when(step) {
-                                SettingsStep.MENU -> "SETTINGS"
-                                SettingsStep.NAME -> "NEW NAME"
-                                SettingsStep.PIN_ENTER -> "NEW PIN"
-                                SettingsStep.PIN_CONFIRM -> "CONFIRM"
-                                SettingsStep.SUCCESS -> "UPDATED"
+                            if (secureStorage.isBiometricSupported) {
+                                var isBioEnabled by remember { mutableStateOf(viewModel.isBiometricsEnabled(viewModel.currentId ?: "")) }
+
+                                AppSwitchButton(
+                                    title = "Use Biometrics",
+                                    checked = isBioEnabled,
+                                    onCheckedChange = { isChecked ->
+                                        isBioEnabled = isChecked
+                                        viewModel.setBiometricsEnabled(viewModel.currentId ?: "", isChecked)
+                                    }
+                                )
                             }
 
-                            val accountToShow = if(step == SettingsStep.NAME) previewAccount else StoredAccount(
-                                viewModel.currentId ?: "",
-                                viewModel.currentName,
-                                ""
-                            )
+                            if (ScreenCaptureProtection.isSupported) {
+                                var isCaptureBlocked by remember { mutableStateOf(viewModel.isScreenCaptureBlocked()) }
 
-                            val showOverlay = step == SettingsStep.PIN_ENTER || step == SettingsStep.PIN_CONFIRM || step == SettingsStep.SUCCESS
+                                AppSwitchButton(
+                                    title = "Block Screenshots",
+                                    checked = isCaptureBlocked,
+                                    onCheckedChange = { isChecked ->
+                                        isCaptureBlocked = isChecked
+                                        viewModel.setScreenCaptureBlocked(isChecked)
+                                    }
+                                )
+                            }
 
-                            key(viewModel.isCardConnected) {
+                            Spacer(Modifier.height(16.dp))
+
+                            SettingsMenuButton("Change Name") { step = SettingsStep.NAME }
+                            SettingsMenuButton("Change PIN") { step = SettingsStep.PIN_ENTER }
+
+                            Spacer(Modifier.height(16.dp))
+
+                            SettingsMenuButton("Delete account on device", color = MaterialTheme.colorScheme.error) {
+                                showDeleteConfirm = true
+                            }
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(60.dp),
+                        contentAlignment = Alignment.TopCenter
+                    ) {
+                        AppTextButton(text = "Close", onClick = onBack, modifier = Modifier.height(48.dp))
+                    }
+                }
+                else -> SplitLayout(
+                    cardContent = {
+                        BoxWithConstraints(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            val metrics = rememberCardMetrics(maxWidth, maxHeight)
+                            val heightBasedWidth = (maxHeight - 40.dp).coerceAtLeast(0.dp) * 1.586f
+                            val targetWidth = min(maxWidth * 1.1f, heightBasedWidth)
+
+                            val showOverlay = currentStep != SettingsStep.NAME
+
+                            Box(modifier = Modifier.width(targetWidth)) {
                                 WalletCard(
-                                    account = accountToShow,
+                                    account = previewAccount,
                                     modifier = Modifier.fillMaxWidth(),
                                     isOnline = viewModel.isCardConnected,
-                                    showFullId = true,
-                                    onIdClick = {
-                                        viewModel.currentId?.let { id ->
-                                            clipboard.copy(id)
-                                            viewModel.showUserMessage("ID copied to clipboard")
-                                        }
-                                    },
+                                    showFullId = false,
                                     overlayContent = if (showOverlay) {
                                         {
-                                            if (step == SettingsStep.SUCCESS) {
-                                                Box(
-                                                    contentAlignment = Alignment.Center,
-                                                    modifier = Modifier.fillMaxSize()
-                                                ) {
+                                            if (currentStep == SettingsStep.SUCCESS) {
+                                                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                                                     Icon(
                                                         imageVector = Icons.Default.CheckCircle,
                                                         contentDescription = "Success",
@@ -238,11 +276,11 @@ fun SettingsScreen(
                                                 }
                                             } else {
                                                 PinOverlay(
-                                                    title,
-                                                    pinInput.length,
-                                                    isError,
-                                                    shakeOffset.value,
-                                                    metrics
+                                                    title = if (currentStep == SettingsStep.PIN_ENTER) "NEW PIN" else "CONFIRM",
+                                                    pinLength = pinInput.length,
+                                                    isError = isError,
+                                                    shakeOffset = shakeOffset.value,
+                                                    metrics = metrics
                                                 )
                                             }
                                         }
@@ -250,102 +288,65 @@ fun SettingsScreen(
                                 )
                             }
                         }
-                    }
-                }
-            },
-            inputContent = {
-                BoxWithConstraints(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    val numPadMetrics = rememberNumPadMetrics(maxWidth, maxHeight)
+                    },
+                    inputContent = {
+                        BoxWithConstraints(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                            val metrics = rememberNumPadMetrics(maxWidth, maxHeight)
 
-                    AnimatedContent(
-                        targetState = step,
-                        transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(300)) }
-                    ) { currentStep ->
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(numPadMetrics.buttonSize * 0.25f),
-                            modifier = Modifier.widthIn(max = 400.dp)
-                        ) {
-                            when (currentStep) {
-                                SettingsStep.MENU -> {
-                                    SettingsMenuButton("Change Name", MaterialTheme.colorScheme.onBackground) { step = SettingsStep.NAME }
-                                    SettingsMenuButton("Change PIN", MaterialTheme.colorScheme.onBackground) { step = SettingsStep.PIN_ENTER }
-
-                                    Spacer(Modifier.height(16.dp))
-
-                                    if (secureStorage.isBiometricSupported) {
-                                        var isBioEnabled by remember { mutableStateOf(viewModel.isBiometricsEnabled(viewModel.currentId ?: "")) }
-
-                                        AppSwitchButton(
-                                            title = "Use Biometrics",
-                                            checked = isBioEnabled,
-                                            onCheckedChange = { isChecked ->
-                                                isBioEnabled = isChecked
-                                                viewModel.setBiometricsEnabled(viewModel.currentId ?: "", isChecked)
-                                            }
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
+                                modifier = Modifier.widthIn(max = 400.dp)
+                            ) {
+                                when (currentStep) {
+                                    SettingsStep.NAME -> NameInputSection(nameInput, { nameInput = it }, { handleNameSubmit() }, metrics.buttonSize)
+                                    SettingsStep.SUCCESS -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("Success!", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+                                        Spacer(Modifier.height(24.dp))
+                                        AppButton(
+                                            text = "Back to Dashboard",
+                                            onClick = onBack,
+                                            modifier = Modifier.height(50.dp).width(200.dp)
                                         )
-                                        Spacer(Modifier.height(16.dp))
                                     }
-
-                                    if (ScreenCaptureProtection.isSupported) {
-                                        var isCaptureBlocked by remember { mutableStateOf(viewModel.isScreenCaptureBlocked()) }
-
-                                        AppSwitchButton(
-                                            title = "Block Screenshots",
-                                            checked = isCaptureBlocked,
-                                            onCheckedChange = { isChecked ->
-                                                isCaptureBlocked = isChecked
-                                                viewModel.setScreenCaptureBlocked(isChecked)
-                                            }
-                                        )
-                                        Spacer(Modifier.height(16.dp))
-                                    }
-
-                                    SettingsMenuButton("Delete account on device", color = MaterialTheme.colorScheme.error) {
-                                        viewModel.deleteCurrentAccount()
-                                    }
-                                }
-                                SettingsStep.NAME -> {
-                                    NameInputSection(nameInput, { nameInput = it }, { handleNameSubmit() }, numPadMetrics.buttonSize)
-                                }
-                                SettingsStep.PIN_ENTER, SettingsStep.PIN_CONFIRM -> {
-                                    ResizableNumPad(
-                                        buttonSize = numPadMetrics.buttonSize,
-                                        textSize = numPadMetrics.textSize,
+                                    else -> ResizableNumPad(
+                                        buttonSize = metrics.buttonSize,
+                                        textSize = metrics.textSize,
                                         onDigit = { handleDigit(it) },
                                         onDelete = { if (pinInput.isNotEmpty()) pinInput = pinInput.dropLast(1) }
                                     )
                                 }
-                                SettingsStep.SUCCESS -> {
-                                    Text("Success!", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                                    Spacer(Modifier.height(16.dp))
-                                    AppButton(
-                                        text = "Back to Dashboard",
-                                        onClick = onBack,
-                                        modifier = Modifier.height(50.dp).width(200.dp)
-                                    )
-                                }
                             }
                         }
+                    },
+                    bottomContent = {
+                        if (currentStep != SettingsStep.SUCCESS && !isLoading) {
+                            AppTextButton(
+                                text = "Back",
+                                onClick = { resetToMenu() },
+                                modifier = Modifier.height(48.dp)
+                            )
+                        }
                     }
-                }
-            },
-            bottomContent = {
-                if (step != SettingsStep.SUCCESS && !isLoading) {
-                    val buttonText = if (step == SettingsStep.MENU) "Close" else "Back"
-                    val buttonAction = if (step == SettingsStep.MENU) onBack else { { resetToMenu() } }
-
-                    AppTextButton(
-                        text = buttonText,
-                        onClick = buttonAction,
-                        modifier = Modifier.height(48.dp)
-                    )
-                }
+                )
             }
-        )
+        }
+
+        if (showDeleteConfirm) {
+            AdaptiveAlertDialog(
+                onConfirm = {
+                    showDeleteConfirm = false
+                    viewModel.deleteCurrentAccount()
+                },
+                onDismiss = { showDeleteConfirm = false },
+                confirmText = "Delete",
+                dismissText = "Cancel",
+                title = "Delete Account",
+                text = "Remove this account from the device? The card itself is not affected.",
+                iosConfirmButtonStyle = AlertDialogIosActionStyle.Destructive,
+                iosDismissButtonStyle = AlertDialogIosActionStyle.Cancel
+            )
+        }
 
         if (isLoading) {
             Box(
@@ -361,7 +362,7 @@ fun SettingsScreen(
                         modifier = Modifier.align(Alignment.Center),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        CircularProgressIndicator(color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(60.dp), strokeWidth = 4.dp)
+                        AdaptiveCircularProgressIndicator(color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(60.dp), strokeWidth = 4.dp)
                         Spacer(Modifier.height(32.dp))
                         Text("Hold card to device...", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
                     }
@@ -370,11 +371,7 @@ fun SettingsScreen(
                         modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(100.dp).padding(bottom = 32.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        AppTextButton(
-                            text = "Cancel",
-                            onClick = { resetToMenu() },
-                            modifier = Modifier.height(48.dp)
-                        )
+                        AppTextButton(text = "Cancel", onClick = { resetToMenu() }, modifier = Modifier.height(48.dp))
                     }
                 }
             }
@@ -383,15 +380,22 @@ fun SettingsScreen(
 }
 
 @Composable
-fun SettingsMenuButton(
-    text: String,
-    color: Color = MaterialTheme.colorScheme.onBackground,
-    onClick: () -> Unit
-) {
-    AppOutlinedButton(
-        text = text,
+fun SettingsMenuButton(text: String, color: Color = MaterialTheme.colorScheme.onBackground, onClick: () -> Unit) {
+    AdaptiveButton(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().height(60.dp),
-        textColor = color
-    )
+        modifier = Modifier.fillMaxWidth().height(56.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = color
+        ),
+        liquidGlassColors = LiquidGlassButtonColors(
+            tintColor = Color.Unspecified,
+            surfaceColor = Color.Unspecified,
+            contentColor = color,
+            disabledContentColor = color.copy(alpha = 0.4f)
+        )
+    ) {
+        Text(text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+    }
 }

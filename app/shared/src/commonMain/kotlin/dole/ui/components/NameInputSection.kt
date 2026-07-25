@@ -1,18 +1,26 @@
 package dole.ui.components
 
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.mohamedrejeb.calf.ui.button.AdaptiveIconButton
 
 @Composable
 fun NameInputSection(name: String, onNameChange: (String) -> Unit, onNext: () -> Unit, buttonSize: Dp) {
@@ -21,42 +29,32 @@ fun NameInputSection(name: String, onNameChange: (String) -> Unit, onNext: () ->
     val isEnabled = name.isNotBlank()
 
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-        OutlinedTextField(
+        AppTextField(
             value = name,
             onValueChange = { if (it.length <= 20) onNameChange(it) },
-            label = { Text("Card Holder Name") },
+            placeholder = "Card Holder Name",
             singleLine = true,
             modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
             shape = RoundedCornerShape(12.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = MaterialTheme.colorScheme.surface,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                cursorColor = MaterialTheme.colorScheme.primary,
-                focusedLabelColor = MaterialTheme.colorScheme.primary,
-                unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                unfocusedTextColor = MaterialTheme.colorScheme.onSurface
-            )
+            containerColor = MaterialTheme.colorScheme.surface
         )
         Spacer(Modifier.height(buttonSize * 0.5f))
 
-        Surface(
+        AdaptiveIconButton(
             onClick = onNext,
             enabled = isEnabled,
-            shape = CircleShape,
-            color = if (isEnabled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-            shadowElevation = if (isEnabled) 2.dp else 0.dp,
-            modifier = Modifier.size(buttonSize)
+            modifier = Modifier.size(buttonSize),
+            colors = IconButtonDefaults.filledIconButtonColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    Icons.AutoMirrored.Filled.ArrowForward, "Next",
-                    tint = if (isEnabled) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(buttonSize * 0.4f)
-                )
-            }
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowForward, "Next",
+                modifier = Modifier.size(buttonSize * 0.4f)
+            )
         }
     }
 }

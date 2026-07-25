@@ -2,7 +2,6 @@ package dole.ui.screens
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibilityScope
-import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
@@ -25,7 +24,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -50,6 +48,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
 import androidx.compose.ui.zIndex
+import com.mohamedrejeb.calf.ui.progress.AdaptiveCircularProgressIndicator
 import dole.data.models.StoredAccount
 import dole.ui.components.AppBackHandler
 import dole.ui.components.AppButton
@@ -69,7 +68,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.time.Duration.Companion.milliseconds
 
-@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun SetupScreen(
     cardId: String,
@@ -189,14 +187,12 @@ fun SetupScreen(
                     boundsTransform = { _, _ -> tween(500) }
                 )
                 .onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyUp && event.key == Key.Enter) {
-                        if (isSuccess) {
-                            onComplete(wantsBiometrics)
-                            true
-                        } else if (step == 1 && name.isNotBlank()) {
-                            handleNameSubmit()
-                            true
-                        } else false
+                    event.type == KeyEventType.KeyUp && event.key == Key.Enter && if (isSuccess) {
+                        onComplete(wantsBiometrics)
+                        true
+                    } else if (step == 1 && name.isNotBlank()) {
+                        handleNameSubmit()
+                        true
                     } else false
                 }
                 .pinInputHandler(
@@ -332,7 +328,7 @@ fun SetupScreen(
                 ) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator(color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(60.dp), strokeWidth = 4.dp)
+                            AdaptiveCircularProgressIndicator(color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(60.dp), strokeWidth = 4.dp)
                             Spacer(Modifier.height(32.dp))
                             Text("Please hold card to your device", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
                         }

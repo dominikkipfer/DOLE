@@ -69,9 +69,7 @@ class DesktopSecureStorage : SecureStorage {
 
         if (keyStoreFile.exists()) {
             keyStoreFile.inputStream().use { keyStore.load(it, password) }
-            if (keyStore.containsAlias(keyAlias)) {
-                return keyStore.getKey(keyAlias, password) as SecretKey
-            }
+            if (keyStore.containsAlias(keyAlias)) return keyStore.getKey(keyAlias, password) as SecretKey
         } else {
             keyStore.load(null, password)
         }

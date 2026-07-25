@@ -43,6 +43,7 @@ public class Card extends Applet implements ExtendedLength {
 
     private short peerCount = 0;
     private short certLength = 0;
+    private int pinEpoch = 0;
 
     // Crypto Objects
     private final KeyPair keyPair;
@@ -158,18 +159,19 @@ public class Card extends Applet implements ExtendedLength {
 
         try {
             switch (ins) {
-                case Constants.OP_GET_STATUS:  processGetStatus(apdu);  break;
-                case Constants.OP_VERIFY_PIN:  verifyPin(apdu);         break;
-                case Constants.OP_CHANGE_PIN:  processChangePin(apdu);  break;
-                case Constants.OP_GENESIS:     processGenesis(apdu);    break;
-                case Constants.OP_SEND:        processSend(apdu);       break;
-                case Constants.OP_RECEIVE:     processReceive(apdu);    break;
-                case Constants.OP_ADD_PEER:    addPeer(apdu);           break;
-                case Constants.OP_MINT:        processMint(apdu);       break;
-                case Constants.OP_BURN:        processBurn(apdu);       break;
-                case Constants.OP_GET_PUBKEY:  getPublicKey(apdu);      break;
-                case Constants.OP_GET_CERT:    processGetCert(apdu);    break;
-                case Constants.OP_SET_CERT:    processSetCert(apdu);    break;
+                case Constants.OP_GET_STATUS:        processGetStatus(apdu);       break;
+                case Constants.OP_GET_SECURE_STATUS: processGetSecureStatus(apdu); break;
+                case Constants.OP_VERIFY_PIN:        verifyPin(apdu);              break;
+                case Constants.OP_CHANGE_PIN:        processChangePin(apdu);       break;
+                case Constants.OP_GENESIS:           processGenesis(apdu);         break;
+                case Constants.OP_SEND:              processSend(apdu);            break;
+                case Constants.OP_RECEIVE:           processReceive(apdu);         break;
+                case Constants.OP_ADD_PEER:          addPeer(apdu);                break;
+                case Constants.OP_MINT:              processMint(apdu);            break;
+                case Constants.OP_BURN:              processBurn(apdu);            break;
+                case Constants.OP_GET_PUBKEY:        getPublicKey(apdu);           break;
+                case Constants.OP_GET_CERT:          processGetCert(apdu);         break;
+                case Constants.OP_SET_CERT:          processSetCert(apdu);         break;
                 default: ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
             }
         } catch (ISOException e) {
@@ -198,16 +200,42 @@ public class Card extends Applet implements ExtendedLength {
     }
 
     /**
-     * Processes the GET STATUS command.
+     * Processes GET STATUS without authentication to allow card identification before login.
+     * Returns public metadata and the PIN epoch (for remote change detection).
+     * Sensitive data like balance and sequence require GET SECURE STATUS.
      */
     private void processGetStatus(APDU apdu) {
         byte[] buffer = apdu.getBuffer();
-        buffer[0] = isMinter    ? (byte) 0x01 : (byte) 0x00;
-        buffer[1] = isPinSet    ? (byte) 0x01 : (byte) 0x00;
-        buffer[2] = genesisDone ? (byte) 0x01 : (byte) 0x00;
-        buffer[3] = ownerPin.getTriesRemaining();
-        Util.arrayCopyNonAtomic(myId, (short)28, buffer, (short)4, (short)4);
-        apdu.setOutgoingAndSend((short)0, (short)8);
+        buffer[Constants.CARD_STATUS_OFFSET_MINTER]  = isMinter    ? (byte) 0x01 : (byte) 0x00;
+        buffer[Constants.CARD_STATUS_OFFSET_PIN_SET] = isPinSet    ? (byte) 0x01 : (byte) 0x00;
+        buffer[Constants.CARD_STATUS_OFFSET_GENESIS] = genesisDone ? (byte) 0x01 : (byte) 0x00;
+        buffer[Constants.CARD_STATUS_OFFSET_RETRIES] = ownerPin.getTriesRemaining();
+        Util.arrayCopyNonAtomic(
+            myId,
+            (short)(Constants.ID_SIZE - Constants.CARD_STATUS_ID_LEN),
+            buffer,
+            Constants.CARD_STATUS_OFFSET_ID,
+            Constants.CARD_STATUS_ID_LEN
+        );
+        short epochOff = Constants.CARD_STATUS_OFFSET_PIN_EPOCH;
+        buffer[epochOff]              = (byte)(pinEpoch >>> 24);
+        buffer[(short)(epochOff + 1)] = (byte)(pinEpoch >>> 16);
+        buffer[(short)(epochOff + 2)] = (byte)(pinEpoch >>> 8);
+        buffer[(short)(epochOff + 3)] = (byte)pinEpoch;
+
+        apdu.setOutgoingAndSend((short)0, Constants.CARD_STATUS_SIZE);
+    }
+
+    /**
+     * Reports the balance and signing sequence. Requires authentication.
+     */
+    private void processGetSecureStatus(APDU apdu) {
+        checkPin();
+
+        byte[] buffer = apdu.getBuffer();
+        Util.arrayCopyNonAtomic(balance, (short)0, buffer, Constants.CARD_SECURE_OFFSET_BALANCE, Constants.LONG_SIZE);
+        Util.arrayCopyNonAtomic(seqNumber, (short)0, buffer, Constants.CARD_SECURE_OFFSET_SEQ, Constants.LONG_SIZE);
+        apdu.setOutgoingAndSend((short)0, Constants.CARD_SECURE_STATUS_SIZE);
     }
 
     /**
@@ -223,15 +251,20 @@ public class Card extends Applet implements ExtendedLength {
         }
     }
 
+    /**
+     * Changes the user PIN.
+     */
     private void processChangePin(APDU apdu) {
         byte[] buffer = apdu.getBuffer();
         short len = apdu.setIncomingAndReceive();
         if (len != Constants.PIN_SIZE) ISOException.throwIt(Constants.SW_WRONG_DATA);
-        if (isPinSet) {
-            if (!ownerPin.isValidated()) ISOException.throwIt(Constants.SW_SECURITY_STATUS_NOT_SATISFIED);
-        }
+        if (isPinSet) if (!ownerPin.isValidated()) ISOException.throwIt(Constants.SW_SECURITY_STATUS_NOT_SATISFIED);
+
+        JCSystem.beginTransaction();
         ownerPin.update(buffer, ISO7816.OFFSET_CDATA, Constants.PIN_SIZE);
         isPinSet = true;
+        pinEpoch++;
+        JCSystem.commitTransaction();
     }
 
     /**
@@ -276,6 +309,9 @@ public class Card extends Applet implements ExtendedLength {
         certificateSet = true;
     }
 
+    /**
+     * Sends the device certificate to host.
+     */
     private void processGetCert(APDU apdu) {
         if (certLength == 0) ISOException.throwIt(Constants.SW_CONDITIONS_NOT_SATISFIED);
         byte[] buffer = apdu.getBuffer();
@@ -283,6 +319,9 @@ public class Card extends Applet implements ExtendedLength {
         apdu.setOutgoingAndSend((short)0, certLength);
     }
 
+    /**
+     * Checks if genesis has been completed.
+     */
     private void checkGenesisDone() {
         if (!genesisDone) ISOException.throwIt(Constants.SW_CONDITIONS_NOT_SATISFIED);
     }
@@ -317,6 +356,9 @@ public class Card extends Applet implements ExtendedLength {
         processMintOrBurn(apdu, Constants.OP_BURN, totalBurned);
     }
 
+    /**
+     * Helper for minting or burning currency. Updates balance and total created/burned.
+     */
     private void processMintOrBurn(APDU apdu, byte opType, byte[] targetTotalField) {
         checkPin();
         checkGenesisDone();
@@ -387,10 +429,7 @@ public class Card extends Applet implements ExtendedLength {
         signer.init(myPrivateKey, Signature.MODE_SIGN);
         short sigLen = signer.sign(ramBuffer, (short)0, Constants.LOG_SEND_SIZE, ramBuffer, Constants.LOG_SEND_SIZE);
 
-        Util.arrayCopyNonAtomic(seqNumber, (short)0, ramBuffer, RESP_OFF, Constants.LONG_SIZE);
-        Util.arrayCopyNonAtomic(ramBuffer, Constants.LOG_SEND_SIZE, ramBuffer, (short)(RESP_OFF + Constants.LONG_SIZE), sigLen);
-        short respLen = (short)(Constants.LONG_SIZE + sigLen);
-        Util.arrayCopyNonAtomic(ramBuffer, RESP_OFF, ramBuffer, (short)0, respLen);
+        short respLen = buildTxResponse(mathB, Constants.LONG_SIZE, Constants.LOG_SEND_SIZE, sigLen);
 
         MathLib.increment(seqNumber);
         JCSystem.commitTransaction();
@@ -503,6 +542,9 @@ public class Card extends Applet implements ExtendedLength {
         JCSystem.commitTransaction();
     }
 
+    /**
+     * Signs and builds a response log in ramBuffer. Returns the length of the response.
+     */
     private short signAndBuildResponse(byte type, byte[] extraData, short extraLen, short totalLogSize) {
         ramBuffer[Constants.LOG_OFFSET_TYPE] = type;
 
@@ -525,14 +567,29 @@ public class Card extends Applet implements ExtendedLength {
             return sigLen;
         }
 
-        Util.arrayCopyNonAtomic(seqNumber, (short)0, ramBuffer, RESP_OFF, Constants.LONG_SIZE);
-        Util.arrayCopyNonAtomic(ramBuffer, sigOff, ramBuffer, (short)(RESP_OFF + Constants.LONG_SIZE), sigLen);
-        short respLen = (short)(Constants.LONG_SIZE + sigLen);
-
-        Util.arrayCopyNonAtomic(ramBuffer, RESP_OFF, ramBuffer, (short)0, respLen);
-
+        short respLen = buildTxResponse(extraData, extraLen, sigOff, sigLen);
         MathLib.increment(seqNumber);
 
+        return respLen;
+    }
+
+    /**
+     * Formats a transaction response with sequence, counter, and signature.
+     * Includes the counter explicitly to prevent ledger state mismatch if records are lost.
+     */
+    private short buildTxResponse(byte[] gocData, short gocLen, short sigOff, short sigLen) {
+        short gocRespOff = (short)(RESP_OFF + Constants.LONG_SIZE);
+        short sigRespOff = (short)(gocRespOff + Constants.LONG_SIZE);
+
+        Util.arrayCopyNonAtomic(seqNumber, (short)0, ramBuffer, RESP_OFF, Constants.LONG_SIZE);
+        Util.arrayFillNonAtomic(ramBuffer, gocRespOff, Constants.LONG_SIZE, (byte)0);
+        if (gocData != null && gocLen > 0) {
+            Util.arrayCopyNonAtomic(gocData, (short)0, ramBuffer, gocRespOff, gocLen);
+        }
+        Util.arrayCopyNonAtomic(ramBuffer, sigOff, ramBuffer, sigRespOff, sigLen);
+
+        short respLen = (short)(Constants.LONG_SIZE + Constants.LONG_SIZE + sigLen);
+        Util.arrayCopyNonAtomic(ramBuffer, RESP_OFF, ramBuffer, (short)0, respLen);
         return respLen;
     }
 

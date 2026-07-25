@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use iroh::EndpointId;
@@ -7,6 +8,27 @@ use super::InboundSource;
 use super::session::SessionId;
 
 const LOG_TARGET: &str = "dole::network";
+
+static PEER_SNAPSHOT: Mutex<Vec<PeerConnection>> = Mutex::new(Vec::new());
+
+#[derive(uniffi::Record, Clone, Eq, PartialEq)]
+pub struct PeerConnection {
+    pub session_id: String,
+    pub ble: bool,
+    pub mdns: bool,
+    pub internet: bool
+}
+
+#[uniffi::export]
+pub fn connected_peers() -> Vec<PeerConnection> {
+    PEER_SNAPSHOT.lock().map(|peers| peers.clone()).unwrap_or_default()
+}
+
+pub(crate) fn clear_peer_snapshot() {
+    if let Ok(mut peers) = PEER_SNAPSHOT.lock() {
+        peers.clear();
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct PeerBook {
@@ -31,6 +53,7 @@ impl PeerBook {
         let entry = self.endpoints.entry(endpoint_id).or_default();
         entry.mdns = active;
         self.cleanup_endpoint(endpoint_id);
+        self.publish();
         old != self.summary_entries()
     }
 
@@ -45,6 +68,7 @@ impl PeerBook {
         let old = self.summary_entries();
         let entry = self.ble_sessions.entry(session_id).or_default();
         entry.ble_seen_at = Some(seen_at);
+        self.publish();
         old != self.summary_entries()
     }
 
@@ -56,6 +80,7 @@ impl PeerBook {
         let old = self.summary_entries();
         let entry = self.endpoints.entry(endpoint_id).or_default();
         entry.iroh_seen_at = Some(seen_at);
+        self.publish();
         old != self.summary_entries()
     }
 
@@ -65,11 +90,17 @@ impl PeerBook {
             entry.iroh_seen_at = None;
         }
         self.cleanup_endpoint(endpoint_id);
+        self.publish();
         old != self.summary_entries()
     }
 
     pub(crate) fn session_label(&self, endpoint_id: EndpointId) -> String {
         SessionId::from_endpoint_id(endpoint_id).short()
+    }
+
+    pub(crate) fn drop_iroh(&mut self) {
+        self.endpoints.clear();
+        self.publish();
     }
 
     pub(crate) fn iroh_count(&self) -> usize {
@@ -139,6 +170,7 @@ impl PeerBook {
             self.cleanup_endpoint(endpoint_id);
         }
 
+        self.publish();
         old != self.summary_entries()
     }
 
@@ -191,6 +223,55 @@ impl PeerBook {
         );
         peers.sort();
         peers
+    }
+
+    fn publish(&self) {
+        let snapshot = self.connection_entries();
+        if let Ok(mut peers) = PEER_SNAPSHOT.lock()
+            && *peers != snapshot
+        {
+            *peers = snapshot;
+        }
+    }
+
+    fn connection_entries(&self) -> Vec<PeerConnection> {
+        let mut peers = self
+            .endpoints
+            .iter()
+            .filter(|(_, state)| endpoint_state_iroh_available(state))
+            .map(|(endpoint_id, state)| {
+                let session_id = SessionId::from_endpoint_id(*endpoint_id);
+                PeerConnection {
+                    session_id: session_id.short(),
+                    ble: self.session_receiving_ble(session_id),
+                    mdns: state.mdns,
+                    internet: state.iroh_seen_at.is_some() && !state.mdns
+                }
+            })
+            .collect::<Vec<_>>();
+
+        peers.extend(
+            self.ble_sessions
+                .iter()
+                .filter(|(session_id, state)| {
+                    state.ble_seen_at.is_some() && !self.session_has_iroh(**session_id)
+                })
+                .map(|(session_id, _)| PeerConnection {
+                    session_id: session_id.short(),
+                    ble: true,
+                    mdns: false,
+                    internet: false
+                })
+        );
+
+        peers.sort_by(|a, b| a.session_id.cmp(&b.session_id));
+        peers
+    }
+
+    fn session_receiving_ble(&self, session_id: SessionId) -> bool {
+        self.ble_sessions
+            .get(&session_id)
+            .is_some_and(|state| state.ble_seen_at.is_some())
     }
 
     fn session_has_iroh(&self, session_id: SessionId) -> bool {
