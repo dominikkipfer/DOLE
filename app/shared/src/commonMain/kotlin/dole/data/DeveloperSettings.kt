@@ -11,6 +11,7 @@ import dole.viewmodel.PeerConnection
 import dole.viewmodel.TransportStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -35,11 +36,11 @@ class DeveloperSettings(
         ThemeMode.entries.find { it.name == settings.getStringOrNull(KEY_THEME_MODE) } ?: ThemeMode.SYSTEM
     ); private set
 
-    var isBleEnabled by mutableStateOf(settings.getBoolean(KEY_BLE_ENABLED, true)); private set
+    var isBleEnabled by mutableStateOf(CoreWrapper.isBleSupported && settings.getBoolean(KEY_BLE_ENABLED, true)); private set
     var isIrohEnabled by mutableStateOf(settings.getBoolean(KEY_IROH_ENABLED, true)); private set
     var isInternetEnabled by mutableStateOf(settings.getBoolean(KEY_INTERNET_ENABLED, true)); private set
 
-    var status by mutableStateOf(TransportStatus(false, false, false)); private set
+    var status by mutableStateOf(TransportStatus(ble = false, iroh = false, internet = false)); private set
     var peers by mutableStateOf<List<PeerConnection>>(emptyList()); private set
 
     private var isPermitted = false
@@ -118,6 +119,7 @@ class DeveloperSettings(
         isInternetEnabled = enabled
         settings.putBoolean(KEY_INTERNET_ENABLED, enabled)
         CoreWrapper.setInternetEnabled(enabled)
+        applyTransports()
     }
 
     fun selectThemeMode(mode: ThemeMode) {
@@ -132,7 +134,7 @@ class DeveloperSettings(
         settings.remove(KEY_THEME_MODE)
 
         themeMode = ThemeMode.SYSTEM
-        isBleEnabled = settings.getBoolean(KEY_BLE_ENABLED, true)
+        isBleEnabled = CoreWrapper.isBleSupported && settings.getBoolean(KEY_BLE_ENABLED, true)
         isIrohEnabled = settings.getBoolean(KEY_IROH_ENABLED, true)
         isInternetEnabled = settings.getBoolean(KEY_INTERNET_ENABLED, true)
 
@@ -166,7 +168,7 @@ class DeveloperSettings(
     }
 
     private fun applyTransports() {
-        val wantEngine = isPermitted && (isIrohEnabled || isBleEnabled)
+        val wantEngine = isPermitted && (isIrohEnabled || isBleEnabled || isInternetEnabled)
         val wantBle = isPermitted && isBluetoothAvailable && isBleEnabled
 
         if (wantEngine != isEngineRunning) {
@@ -203,6 +205,7 @@ class DeveloperSettings(
                 }
                 if (snapshot.first != peers) peers = snapshot.first
                 if (snapshot.second != status) status = snapshot.second
+                withContext(Dispatchers.IO) { CoreWrapper.benchLatencyReport() }?.let(notify)
                 delay(POLL_INTERVAL)
             }
         }
@@ -212,7 +215,7 @@ class DeveloperSettings(
         pollJob?.cancel()
         pollJob = null
         peers = emptyList()
-        status = TransportStatus(false, false, false)
+        status = TransportStatus(ble = false, iroh = false, internet = false)
     }
 
     private fun startRetryLoop() {

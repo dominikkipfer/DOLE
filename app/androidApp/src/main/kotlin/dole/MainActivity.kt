@@ -41,11 +41,11 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
             when (intent?.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
                 BluetoothAdapter.STATE_TURNING_OFF, BluetoothAdapter.STATE_OFF -> {
                     Log.i("DOLE", "Bluetooth off; stopping BLE transport")
-                    viewModel.onBluetoothAvailabilityChanged(false)
+                    viewModel.developer.onBluetoothAvailabilityChanged(false)
                 }
                 BluetoothAdapter.STATE_ON -> {
                     Log.i("DOLE", "Bluetooth back on; restarting BLE transport")
-                    viewModel.onBluetoothAvailabilityChanged(true)
+                    viewModel.developer.onBluetoothAvailabilityChanged(true)
                 }
             }
         }
@@ -152,7 +152,7 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
     private fun startNetworkServices() {
         acquireMulticastLock()
         val adapter = (getSystemService(BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
-        viewModel.onBluetoothAvailabilityChanged(adapter?.isEnabled == true)
+        viewModel.developer.onBluetoothAvailabilityChanged(adapter?.isEnabled == true)
         viewModel.onNetworkPermissionsGranted()
         Log.i("DOLE", "Network services start requested")
     }

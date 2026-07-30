@@ -33,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
@@ -124,12 +125,12 @@ fun WalletApp(viewModel: WalletViewModel) {
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(contentPadding)
-                                .windowInsetsPadding(WindowInsets.safeDrawing)
                                 .pointerInput(Unit) { detectTapGestures { focusManager.clearFocus() } }
                         ) {
                             AnimatedContent(
                                 targetState = viewModel.currentScreen,
                                 label = "ScreenTransition",
+                                modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
                                 transitionSpec = {
                                     fadeIn(animationSpec = tween(400)) togetherWith fadeOut(animationSpec = tween(400))
                                 }
@@ -217,7 +218,7 @@ fun WalletApp(viewModel: WalletViewModel) {
                                 visible = showNewCardOverlay,
                                 enter = enterTransition,
                                 exit = exitTransition,
-                                modifier = Modifier.zIndex(9999f)
+                                modifier = Modifier.align(Alignment.BottomCenter).zIndex(9999f)
                             ) {
                                 NewCardOverlay(
                                     cardId = viewModel.currentDetectedCardId ?: "Unknown",

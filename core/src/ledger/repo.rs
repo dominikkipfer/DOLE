@@ -1,5 +1,10 @@
 use gix::bstr::{BString, ByteSlice};
-use gix::{actor::Signature, date::{OffsetInSeconds, SecondsSinceUnixEpoch, Time}, objs::{Commit, Tree}};
+use gix::objs::Exists;
+use gix::{
+    actor::Signature,
+    date::{OffsetInSeconds, SecondsSinceUnixEpoch, Time},
+    objs::{Commit, Tree},
+};
 use std::collections::HashMap;
 use std::ops::ControlFlow;
 use std::path::PathBuf;
@@ -10,6 +15,14 @@ use crate::sync::{TxHeader, type_from_tx_label};
 pub(super) const RECOVERY_ID_HEADER: &str = "dole-recovery-id";
 pub(super) const GENESIS_REF_PREFIX: &str = "refs/dole-genesis/";
 
+pub(super) fn recovery_id_from_commit(decoded: &gix::objs::CommitRef<'_>) -> Option<u8> {
+    decoded
+        .extra_headers()
+        .find(RECOVERY_ID_HEADER)
+        .and_then(|value| value.to_str_lossy().as_ref().parse::<u8>().ok())
+        .filter(|recovery_id| *recovery_id <= 3)
+}
+
 pub(super) struct CommitInput<'a> {
     pub(super) branch: &'a str,
     pub(super) tx_t: &'a str,
@@ -18,7 +31,7 @@ pub(super) struct CommitInput<'a> {
     pub(super) seq: u64,
     pub(super) ts: u64,
     pub(super) sig: &'a str,
-    pub(super) recovery_id: u8
+    pub(super) recovery_id: u8,
 }
 
 pub(super) struct KnownBranchTx {
@@ -26,7 +39,7 @@ pub(super) struct KnownBranchTx {
     pub(super) target: String,
     pub(super) payload: String,
     pub(super) sig: String,
-    pub(super) recovery_id: Option<u8>
+    pub(super) recovery_id: Option<u8>,
 }
 
 impl KnownBranchTx {
@@ -36,7 +49,7 @@ impl KnownBranchTx {
         target: &str,
         payload: &str,
         sig: &str,
-        recovery_id: u8
+        recovery_id: u8,
     ) -> bool {
         self.tx_t == tx_t
             && self.target.eq_ignore_ascii_case(target)
@@ -49,7 +62,7 @@ impl KnownBranchTx {
 pub(super) fn for_each_commit(
     repo: &gix::Repository,
     branch: &str,
-    mut visit: impl FnMut(gix::ObjectId, &gix::Commit<'_>) -> ControlFlow<()>
+    mut visit: impl FnMut(gix::ObjectId, &gix::Commit<'_>) -> ControlFlow<()>,
 ) {
     let branch_ref = format!("refs/heads/{branch}");
     let Ok(reference) = repo.find_reference(branch_ref.as_str()) else {
@@ -90,6 +103,17 @@ pub(super) fn ensure_repo_initialized(repo_path: &PathBuf) {
     }
 }
 
+fn empty_tree_id(repo: &gix::Repository) -> Result<gix::ObjectId, String> {
+    let tree_id = repo.object_hash().empty_tree();
+    if repo.objects.exists(&tree_id) {
+        return Ok(tree_id);
+    }
+
+    repo.write_object(Tree::empty())
+        .map(|id| id.detach())
+        .map_err(|e| e.to_string())
+}
+
 pub(super) fn target_for_commit(tx_t: &str, target: &str) -> String {
     if tx_t == "S" {
         return person_id_hex_from_id_or_pubkey_hex(target).unwrap_or_else(|| target.to_string());
@@ -118,7 +142,11 @@ pub(super) fn get_pubkey_from_genesis(repo: &gix::Repository, branch: &str) -> O
 fn genesis_pubkey_from_ref(repo: &gix::Repository, branch: &str) -> Option<String> {
     let ref_name = format!("{GENESIS_REF_PREFIX}{branch}");
     let reference = repo.find_reference(ref_name.as_str()).ok()?;
-    let commit = repo.find_object(reference.id().detach()).ok()?.try_into_commit().ok()?;
+    let commit = repo
+        .find_object(reference.id().detach())
+        .ok()?
+        .try_into_commit()
+        .ok()?;
     genesis_pubkey_from_commit(&commit)
 }
 
@@ -136,20 +164,35 @@ fn genesis_pubkey_from_commit(commit: &gix::Commit<'_>) -> Option<String> {
         .then(|| public_key.into_owned())
 }
 
-pub(super) fn write_commit(repo: &gix::Repository, input: CommitInput<'_>) -> Result<String, String> {
+pub(super) fn write_commit(
+    repo: &gix::Repository,
+    input: CommitInput<'_>,
+) -> Result<String, String> {
     let CommitInput {
-        branch, tx_t, target, goc, seq, ts, sig, recovery_id
+        branch,
+        tx_t,
+        target,
+        goc,
+        seq,
+        ts,
+        sig,
+        recovery_id,
     } = input;
     let tx_type = type_from_tx_label(tx_t).ok_or_else(|| format!("invalid type: {tx_t}"))?;
     TxHeader::checked(tx_type, recovery_id, 0)
         .ok_or_else(|| format!("invalid recovery-id for tx type {tx_t}: {recovery_id}"))?;
-    let seq_seconds = i64::try_from(seq).map_err(|_| format!("sequence is too large for git time: {seq}"))?;
-    let ts_seconds = i64::try_from(ts).map_err(|_| format!("timestamp is too large for git time: {ts}"))?;
+    let seq_seconds =
+        i64::try_from(seq).map_err(|_| format!("sequence is too large for git time: {seq}"))?;
+    let ts_seconds =
+        i64::try_from(ts).map_err(|_| format!("timestamp is too large for git time: {ts}"))?;
 
-    let tree_id = repo.write_object(Tree::empty()).map_err(|e| e.to_string())?.detach();
+    let tree_id = empty_tree_id(repo)?;
 
     let branch_ref = format!("refs/heads/{}", branch);
-    let parent = repo.find_reference(&branch_ref).ok().map(|r| r.id().detach());
+    let parent = repo
+        .find_reference(&branch_ref)
+        .ok()
+        .map(|r| r.id().detach());
     let mut parents = Vec::new();
     if let Some(p) = parent {
         parents.push(p);
@@ -160,14 +203,17 @@ pub(super) fn write_commit(repo: &gix::Repository, input: CommitInput<'_>) -> Re
         email: goc.into(),
         time: Time {
             seconds: seq_seconds as SecondsSinceUnixEpoch,
-            offset: 0 as OffsetInSeconds
-        }
+            offset: 0 as OffsetInSeconds,
+        },
     };
 
     let committer = Signature {
         name: target.into(),
         email: sig.into(),
-        time: Time {seconds: ts_seconds as SecondsSinceUnixEpoch, offset: 0 as OffsetInSeconds}
+        time: Time {
+            seconds: ts_seconds as SecondsSinceUnixEpoch,
+            offset: 0 as OffsetInSeconds,
+        },
     };
 
     let commit = Commit {
@@ -179,11 +225,14 @@ pub(super) fn write_commit(repo: &gix::Repository, input: CommitInput<'_>) -> Re
         message: "".into(),
         extra_headers: vec![(
             BString::from(RECOVERY_ID_HEADER.as_bytes().to_vec()),
-            BString::from(recovery_id.to_string().into_bytes())
-        )]
+            BString::from(recovery_id.to_string().into_bytes()),
+        )],
     };
 
-    let id = repo.write_object(&commit).map_err(|e| e.to_string())?.detach();
+    let id = repo
+        .write_object(&commit)
+        .map_err(|e| e.to_string())?
+        .detach();
 
     let branch_full_name = format!("refs/heads/{}", branch);
     let edit = gix::refs::transaction::RefEdit {
@@ -191,18 +240,21 @@ pub(super) fn write_commit(repo: &gix::Repository, input: CommitInput<'_>) -> Re
             log: gix::refs::transaction::LogChange {
                 mode: gix::refs::transaction::RefLog::AndReference,
                 force_create_reflog: false,
-                message: "tx".into()
+                message: "tx".into(),
             },
             expected: match parent {
                 Some(pid) => gix::refs::transaction::PreviousValue::ExistingMustMatch(
-                    gix::refs::Target::Object(pid)
+                    gix::refs::Target::Object(pid),
                 ),
-                None => gix::refs::transaction::PreviousValue::MustNotExist
+                None => gix::refs::transaction::PreviousValue::MustNotExist,
             },
-            new: gix::refs::Target::Object(id)
+            new: gix::refs::Target::Object(id),
         },
-        name: branch_full_name.as_str().try_into().map_err(|e| format!("{:?}", e))?,
-        deref: false
+        name: branch_full_name
+            .as_str()
+            .try_into()
+            .map_err(|e| format!("{:?}", e))?,
+        deref: false,
     };
 
     repo.edit_reference(edit).map_err(|e| e.to_string())?;
@@ -229,13 +281,13 @@ fn write_genesis_ref(repo: &gix::Repository, branch: &str, genesis_id: gix::Obje
             log: gix::refs::transaction::LogChange {
                 mode: gix::refs::transaction::RefLog::AndReference,
                 force_create_reflog: false,
-                message: "genesis".into()
+                message: "genesis".into(),
             },
             expected: gix::refs::transaction::PreviousValue::Any,
-            new: gix::refs::Target::Object(genesis_id)
+            new: gix::refs::Target::Object(genesis_id),
         },
         name,
-        deref: false
+        deref: false,
     };
 
     if let Err(e) = repo.edit_reference(edit) {
@@ -248,13 +300,15 @@ pub(super) fn get_latest_seq_for_branch(repo: &gix::Repository, branch: &str) ->
 }
 
 pub(super) fn branch_has_seq(repo: &gix::Repository, branch: &str, seq: u64) -> bool {
-    branch_sequences(repo, branch).into_iter().any(|known| known == seq)
+    branch_sequences(repo, branch)
+        .into_iter()
+        .any(|known| known == seq)
 }
 
 pub(super) fn branch_sequences_and_tx_at(
     repo: &gix::Repository,
     branch: &str,
-    seq: u64
+    seq: u64,
 ) -> (Vec<u64>, Option<KnownBranchTx>) {
     let mut sequences = Vec::new();
     let mut found = None;
@@ -274,17 +328,13 @@ pub(super) fn branch_sequences_and_tx_at(
             return ControlFlow::Continue(());
         };
         if known_seq == seq && found.is_none() {
-            let recovery_id = decoded
-                .extra_headers()
-                .find(RECOVERY_ID_HEADER)
-                .and_then(|value| value.to_str_lossy().as_ref().parse::<u8>().ok())
-                .filter(|recovery_id| *recovery_id <= 3);
+            let recovery_id = recovery_id_from_commit(&decoded);
             found = Some(KnownBranchTx {
                 tx_t: author.name.to_str_lossy().into_owned(),
                 target: committer.name.to_str_lossy().into_owned(),
                 payload: author.email.to_str_lossy().into_owned(),
                 sig: committer.email.to_str_lossy().into_owned(),
-                recovery_id
+                recovery_id,
             });
         }
         ControlFlow::Continue(())

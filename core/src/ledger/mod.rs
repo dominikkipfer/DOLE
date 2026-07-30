@@ -1,8 +1,9 @@
 mod history;
+mod replication;
 mod repo;
-mod sync;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -11,33 +12,38 @@ use tokio::sync::mpsc;
 use crate::constants::{OP_BURN, OP_MINT};
 use crate::crypto::{
     find_genesis_recovery_id, find_tx_recovery_id_for_pubkey_hex,
-    person_id_hex_from_id_or_pubkey_hex, signature_hex_to_raw_hex, verify_tx_signature
+    person_id_hex_from_id_or_pubkey_hex, signature_hex_to_raw_hex, verify_tx_signature,
 };
 use crate::logging;
 use crate::network::{self, OutboundMessage};
 
-use crate::sync::{decode_frontier_announcement, decode_transaction_batch, decode_tx_message, encode_tx_msg};
+use crate::sync::{
+    decode_frontier_announcement, decode_transaction_batch, decode_tx_message, encode_tx_msg,
+};
 use history::notify_ui_internal;
+use replication::{
+    announce_frontier, apply_sync_txs, peer_is_ahead_of_local_frontier,
+    send_history_after_frontier, short_payload_hex,
+};
 use repo::{
     CommitInput, branch_has_seq, contiguous_sequences, ensure_repo_initialized,
-    get_latest_seq_for_branch, get_pubkey_from_genesis, target_for_commit, write_commit
-};
-use sync::{
-    announce_frontier, apply_sync_txs, peer_is_ahead_of_local_frontier,
-    send_history_after_frontier, short_payload_hex
+    get_latest_seq_for_branch, get_pubkey_from_genesis, target_for_commit, write_commit,
 };
 
 pub(super) const LEDGER_LOG_TARGET: &str = "dole::ledger";
 
-pub(super) static ACTIVE_LISTENER: Mutex<Option<(String, Arc<dyn LedgerStateListener>)>> = Mutex::new(None);
-pub(super) static GLOBAL_TX_SENDER: Mutex<Option<mpsc::UnboundedSender<OutboundMessage>>> = Mutex::new(None);
+pub(super) static ACTIVE_LISTENER: Mutex<Option<(String, Arc<dyn LedgerStateListener>)>> =
+    Mutex::new(None);
+pub(super) static GLOBAL_TX_SENDER: Mutex<Option<mpsc::UnboundedSender<OutboundMessage>>> =
+    Mutex::new(None);
 pub(super) static REPO_MUTEX: Mutex<()> = Mutex::new(());
 static GLOBAL_SHUTDOWN_TX: Mutex<Option<mpsc::UnboundedSender<()>>> = Mutex::new(None);
+static SYNC_EPOCH: AtomicU64 = AtomicU64::new(0);
 
 #[derive(uniffi::Record)]
 pub struct GitResult {
     pub success: bool,
-    pub message: String
+    pub message: String,
 }
 
 #[uniffi::export(callback_interface)]
@@ -50,7 +56,7 @@ pub struct Ledger {
     listener: Option<Arc<dyn LedgerStateListener>>,
     public_key_id: String,
     public_key_full: String,
-    repo_path: PathBuf
+    repo_path: PathBuf,
 }
 
 #[uniffi::export]
@@ -86,44 +92,46 @@ pub fn start_global_sync(storage_path: String) {
             if let Ok(repo) = gix::open(&frontier_repo_path) {
                 announce_frontier(&repo, &frontier_sync_tx);
             }
+            #[cfg(feature = "bench")]
+            if let Some(payload) = crate::bench::pending_probe_payload() {
+                let _ = frontier_sync_tx.send(OutboundMessage::Transactions(vec![payload]));
+            }
         }
     });
 
     thread::spawn(move || {
+        let mut epoch = SYNC_EPOCH.load(Ordering::Relaxed);
         while let Some(msg) = in_rx.blocking_recv() {
+            let current_epoch = SYNC_EPOCH.load(Ordering::Relaxed);
+            if current_epoch != epoch {
+                epoch = current_epoch;
+                let mut dropped = 1;
+                while in_rx.try_recv().is_ok() {
+                    dropped += 1;
+                }
+                log::info!(target: LEDGER_LOG_TARGET, "RX sync backlog discarded reason=ledger-reset messages={dropped}");
+                continue;
+            }
+
             let Ok(repo) = gix::open(&repo_path) else {
                 log::warn!(target: LEDGER_LOG_TARGET, "RX sync skipped reason=repo-unavailable");
                 continue;
             };
 
             if let Some(peer_sequences) = decode_frontier_announcement(&msg) {
-                log::debug!(
-                    target: LEDGER_LOG_TARGET,
-                    "RX sync frontier branches={} bytes={}",
-                    peer_sequences.len(),
-                    msg.len()
-                );
                 let local_sequences = contiguous_sequences(&repo);
                 let should_announce_back =
                     peer_is_ahead_of_local_frontier(&local_sequences, &peer_sequences);
-                send_history_after_frontier(&repo, &sync_tx, &peer_sequences);
+                if !bench_history_sync_paused() {
+                    send_history_after_frontier(&repo, &sync_tx, &peer_sequences);
+                }
                 if should_announce_back {
-                    log::debug!(
-                        target: LEDGER_LOG_TARGET,
-                        "TX sync frontier announce-back reason=peer-ahead"
-                    );
                     announce_frontier(&repo, &sync_tx);
                 }
                 continue;
             }
 
             if let Some(tx_messages) = decode_transaction_batch(&msg) {
-                log::debug!(
-                    target: LEDGER_LOG_TARGET,
-                    "RX sync tx-batch txs={} bytes={}",
-                    tx_messages.len(),
-                    msg.len()
-                );
                 let sync_txs = tx_messages
                     .iter()
                     .filter_map(|tx_msg| {
@@ -139,12 +147,14 @@ pub fn start_global_sync(storage_path: String) {
                         decoded
                     })
                     .collect();
+                let sync_txs = bench_take_latency_echo(sync_txs);
                 apply_sync_txs(&repo, sync_txs);
                 continue;
             }
 
             if let Some(sync_tx) = decode_tx_message(&msg) {
-                apply_sync_txs(&repo, vec![sync_tx]);
+                let sync_txs = bench_take_latency_echo(vec![sync_tx]);
+                apply_sync_txs(&repo, sync_txs);
             } else {
                 log::warn!(
                     target: LEDGER_LOG_TARGET,
@@ -157,9 +167,38 @@ pub fn start_global_sync(storage_path: String) {
     });
 }
 
+fn bench_history_sync_paused() -> bool {
+    #[cfg(feature = "bench")]
+    {
+        crate::bench::is_benchmark_mode()
+    }
+    #[cfg(not(feature = "bench"))]
+    {
+        false
+    }
+}
+
+fn bench_take_latency_echo(sync_txs: Vec<crate::sync::SyncTx>) -> Vec<crate::sync::SyncTx> {
+    #[cfg(feature = "bench")]
+    {
+        if !crate::bench::latency_pending() {
+            return sync_txs;
+        }
+        sync_txs
+            .into_iter()
+            .filter(|sync_tx| !crate::bench::complete_latency(&sync_tx.sig, sync_tx.ts))
+            .collect()
+    }
+    #[cfg(not(feature = "bench"))]
+    sync_txs
+}
+
 #[uniffi::export]
 pub fn reset_ledger(storage_path: String) -> bool {
     logging::init_logging();
+    SYNC_EPOCH.fetch_add(1, Ordering::Relaxed);
+    network::reset_sync_state();
+
     let repo_path = PathBuf::from(&storage_path).join("dole_ledger");
     let _guard = REPO_MUTEX.lock().unwrap();
 
@@ -172,7 +211,6 @@ pub fn reset_ledger(storage_path: String) -> bool {
 
     ensure_repo_initialized(&repo_path);
     let cleared = gix::open(&repo_path).is_ok();
-    log::info!(target: LEDGER_LOG_TARGET, "Local ledger reset cleared={cleared}");
     cleared
 }
 
@@ -195,7 +233,7 @@ impl Ledger {
         listener: Box<dyn LedgerStateListener>,
         storage_path: String,
         public_key_id: String,
-        public_key_full: String
+        public_key_full: String,
     ) -> Self {
         let listener_arc: Arc<dyn LedgerStateListener> = listener.into();
         let repo_path = PathBuf::from(storage_path).join("dole_ledger");
@@ -204,7 +242,9 @@ impl Ledger {
         let repo = gix::open(&repo_path).ok();
 
         let resolved_pubkey = if public_key_full.is_empty() {
-            repo.as_ref().and_then(|repo| get_pubkey_from_genesis(repo, &public_key_id)).unwrap_or_default()
+            repo.as_ref()
+                .and_then(|repo| get_pubkey_from_genesis(repo, &public_key_id))
+                .unwrap_or_default()
         } else {
             public_key_full
         };
@@ -217,7 +257,7 @@ impl Ledger {
             listener: Some(listener_arc.clone()),
             public_key_id: public_key_id.clone(),
             public_key_full: resolved_pubkey,
-            repo_path
+            repo_path,
         };
 
         if let Some(repo) = repo.as_ref() {
@@ -279,16 +319,16 @@ impl Ledger {
                     seq: 0,
                     ts,
                     sig: &raw_sig_hex,
-                    recovery_id
-                }
+                    recovery_id,
+                },
             )
             .map(|h| GitResult {
                 success: true,
-                message: h
+                message: h,
             })
             .unwrap_or_else(|e| GitResult {
                 success: false,
-                message: e
+                message: e,
             })
         };
 
@@ -300,7 +340,7 @@ impl Ledger {
                 0,
                 ts,
                 &raw_sig_hex,
-                recovery_id
+                recovery_id,
             )
             && let Ok(guard) = GLOBAL_TX_SENDER.lock()
             && let Some(tx) = guard.as_ref()
@@ -341,7 +381,7 @@ impl Ledger {
             &target_pub_key,
             &goc.to_string(),
             seq,
-            &raw_sig_hex
+            &raw_sig_hex,
         ) {
             self.fail("Send signature verification failed".into());
             return false;
@@ -353,7 +393,7 @@ impl Ledger {
             &target_pub_key,
             &goc.to_string(),
             seq,
-            &raw_sig_hex
+            &raw_sig_hex,
         );
         self.handle_tx_result(&repo, res)
     }
@@ -364,7 +404,7 @@ impl Ledger {
         let tx_t = match tx_type {
             OP_MINT => "M",
             OP_BURN => "B",
-            _ => return false
+            _ => return false,
         };
 
         let Some(seq) = card_seq_to_u64(seq) else {
@@ -383,7 +423,9 @@ impl Ledger {
         };
 
         if self.public_key_full.is_empty() {
-            self.fail(format!("{tx_t} failed: missing public key. Seq={seq}, GoC={goc}"));
+            self.fail(format!(
+                "{tx_t} failed: missing public key. Seq={seq}, GoC={goc}"
+            ));
             return false;
         }
 
@@ -393,9 +435,11 @@ impl Ledger {
             "",
             &goc.to_string(),
             seq,
-            &raw_sig_hex
+            &raw_sig_hex,
         ) {
-            self.fail(format!("{tx_t} signature verification failed. Seq={seq}, goc={goc}"));
+            self.fail(format!(
+                "{tx_t} signature verification failed. Seq={seq}, goc={goc}"
+            ));
             return false;
         }
 
@@ -426,7 +470,7 @@ impl Ledger {
         target: &str,
         goc: &str,
         seq: u64,
-        sig: &str
+        sig: &str,
     ) -> GitResult {
         let ts = get_current_timestamp();
         let _guard = REPO_MUTEX.lock().unwrap();
@@ -434,7 +478,7 @@ impl Ledger {
         if branch_has_seq(repo, &self.public_key_id, seq) {
             return GitResult {
                 success: false,
-                message: format!("{tx_t} failed: duplicate sequence {seq}")
+                message: format!("{tx_t} failed: duplicate sequence {seq}"),
             };
         }
         let Some(recovery_id) =
@@ -442,7 +486,7 @@ impl Ledger {
         else {
             return GitResult {
                 success: false,
-                message: format!("{tx_t} failed: recovery-id unavailable for sequence {seq}")
+                message: format!("{tx_t} failed: recovery-id unavailable for sequence {seq}"),
             };
         };
 
@@ -456,8 +500,8 @@ impl Ledger {
                 seq,
                 ts,
                 sig,
-                recovery_id
-            }
+                recovery_id,
+            },
         ) {
             Ok(h) => {
                 let msg = encode_tx_msg(tx_t, target, goc, seq, ts, sig, recovery_id);
@@ -472,19 +516,22 @@ impl Ledger {
                 }
                 GitResult {
                     success: true,
-                    message: h
+                    message: h,
                 }
             }
             Err(e) => GitResult {
                 success: false,
-                message: e
-            }
+                message: e,
+            },
         }
     }
 }
 
 fn get_current_timestamp() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_secs()).unwrap_or_default()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default()
 }
 
 fn positive_i64_to_u64(value: i64) -> Option<u64> {
@@ -497,4 +544,35 @@ fn positive_i64_to_u64(value: i64) -> Option<u64> {
 
 fn card_seq_to_u64(value: i64) -> Option<u64> {
     u64::try_from(value).ok()
+}
+
+#[cfg(feature = "bench-workload")]
+pub(crate) fn bench_apply_sync_txs(
+    repo_path: &PathBuf,
+    sync_txs: Vec<crate::sync::SyncTx>,
+) -> bool {
+    ensure_repo_initialized(repo_path);
+    let Ok(repo) = gix::open(repo_path) else {
+        return false;
+    };
+    apply_sync_txs(&repo, sync_txs);
+    true
+}
+
+#[cfg(feature = "bench")]
+pub(crate) fn bench_send_commit_at(
+    repo_path: &PathBuf,
+    index: usize,
+) -> Option<(String, Vec<u8>, f64, usize)> {
+    let watch = crate::bench::Stopwatch::start();
+    let repo = gix::open(repo_path).ok()?;
+    let (payload, total) = replication::bench_payload_at(&repo, index)?;
+    let signature = decode_tx_message(&payload)?.sig;
+
+    let sender = GLOBAL_TX_SENDER.lock().ok()?.as_ref()?.clone();
+    let internal_ms = watch.elapsed_ms();
+    sender
+        .send(OutboundMessage::Transactions(vec![payload.clone()]))
+        .ok()?;
+    Some((signature, payload, internal_ms, total))
 }

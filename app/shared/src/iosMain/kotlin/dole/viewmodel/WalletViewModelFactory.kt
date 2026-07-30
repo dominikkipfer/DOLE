@@ -1,5 +1,6 @@
 package dole.viewmodel
 
+import androidx.compose.ui.window.ComposeUIViewController
 import com.russhwolf.settings.NSUserDefaultsSettings
 import dole.card.SmartCard
 import dole.data.AccountPreferences
@@ -7,6 +8,11 @@ import dole.data.AccountRegistry
 import dole.data.CardSyncState
 import dole.utils.IosSecureStorage
 import platform.Foundation.NSUserDefaults
+import platform.UIKit.UIViewController
+
+fun createComposeViewController(viewModel: WalletViewModel): UIViewController = ComposeUIViewController {
+    WalletApp(viewModel)
+}
 
 fun createWalletViewModel(card: SmartCard, storagePath: String): WalletViewModel {
     val settings = NSUserDefaultsSettings(NSUserDefaults.standardUserDefaults)

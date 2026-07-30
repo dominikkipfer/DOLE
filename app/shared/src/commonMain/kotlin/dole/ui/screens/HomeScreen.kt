@@ -28,6 +28,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -57,6 +59,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -83,6 +86,7 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -103,6 +107,7 @@ import dole.data.models.MintTransaction
 import dole.data.models.SendTransaction
 import dole.data.models.StoredAccount
 import dole.ui.components.AppTextField
+import dole.ui.components.LocalBottomBarInset
 import dole.ui.components.DoleLogo
 import dole.ui.components.EdgeLabelPlacement
 import dole.ui.components.TransactionAmount
@@ -154,43 +159,55 @@ fun HomeScreen(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0.dp),
         bottomBar = {
-            AdaptiveNavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface,
-                iosItems = buildList {
-                    add(UIKitUITabBarItem("Wallet", UIKitImage.SystemName("creditcard.fill")))
-                    add(UIKitUITabBarItem("History", UIKitImage.SystemName("clock.arrow.circlepath")))
-                    if (hasDeveloperTab) add(UIKitUITabBarItem("Developer", UIKitImage.SystemName("hammer.fill")))
-                },
-                iosSelectedIndex = selectedTab,
-                iosOnItemSelected = { selectedTab = it }
-            ) {
-                NavigationBarItem(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    icon = { Icon(Icons.Default.CreditCard, contentDescription = "Wallet") },
-                    label = { Text("Wallet") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    icon = { Icon(Icons.Default.History, contentDescription = "History") },
-                    label = { Text("History") }
-                )
-                if (hasDeveloperTab) {
+            if (!isOverlayVisible) {
+                AdaptiveNavigationBar(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    iosItems = buildList {
+                        add(UIKitUITabBarItem("Wallet", UIKitImage.SystemName("creditcard.fill")))
+                        add(UIKitUITabBarItem("History", UIKitImage.SystemName("clock.arrow.circlepath")))
+                        if (hasDeveloperTab) add(UIKitUITabBarItem("Developer", UIKitImage.SystemName("hammer.fill")))
+                    },
+                    iosSelectedIndex = selectedTab,
+                    iosOnItemSelected = { selectedTab = it }
+                ) {
                     NavigationBarItem(
-                        selected = selectedTab == 2,
-                        onClick = { selectedTab = 2 },
-                        icon = { Icon(Icons.Default.DeveloperMode, contentDescription = "Developer") },
-                        label = { Text("Developer") }
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        icon = { Icon(Icons.Default.CreditCard, contentDescription = "Wallet") },
+                        label = { Text("Wallet") }
                     )
+                    NavigationBarItem(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        icon = { Icon(Icons.Default.History, contentDescription = "History") },
+                        label = { Text("History") }
+                    )
+                    if (hasDeveloperTab) {
+                        NavigationBarItem(
+                            selected = selectedTab == 2,
+                            onClick = { selectedTab = 2 },
+                            icon = { Icon(Icons.Default.DeveloperMode, contentDescription = "Developer") },
+                            label = { Text("Developer") }
+                        )
+                    }
                 }
             }
         }
     ) { paddingValues ->
+        val layoutDirection = LocalLayoutDirection.current
+        val bottomBarInset = paddingValues.calculateBottomPadding()
+
+        CompositionLocalProvider(LocalBottomBarInset provides bottomBarInset) {
         AnimatedContent(
             targetState = selectedTab,
             label = "home_tab",
-            modifier = Modifier.fillMaxSize().padding(paddingValues),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(
+                    start = paddingValues.calculateStartPadding(layoutDirection),
+                    top = paddingValues.calculateTopPadding(),
+                    end = paddingValues.calculateEndPadding(layoutDirection)
+                ),
             transitionSpec = {
                 val direction = if (targetState > initialState) 1 else -1
                 (slideInHorizontally(tween(350)) { it / 4 * direction } + fadeIn(tween(350))) togetherWith
@@ -217,6 +234,7 @@ fun HomeScreen(
                 else -> developerPane?.invoke()
             }
         }
+        }
     }
 }
 
@@ -235,7 +253,7 @@ private fun WalletPane(
     val onBackgroundColor = MaterialTheme.colorScheme.onBackground
     val emptyTextColor = MaterialTheme.colorScheme.onSurfaceVariant
 
-    Box(modifier = Modifier.fillMaxSize().background(backgroundColor)) {
+    Box(modifier = Modifier.fillMaxSize().background(backgroundColor).padding(bottom = LocalBottomBarInset.current)) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             val isWideLayout = maxWidth > maxHeight
             val density = LocalDensity.current
@@ -583,7 +601,7 @@ private fun NetworkHistoryPane(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
-        contentPadding = PaddingValues(bottom = 24.dp)
+        contentPadding = PaddingValues(bottom = 24.dp + LocalBottomBarInset.current)
     ) {
         item(key = "header") {
             Text(

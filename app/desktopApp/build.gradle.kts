@@ -4,7 +4,6 @@ plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.compose)
     alias(libs.plugins.kotlin.plugin.compose)
-    alias(libs.plugins.metro)
 }
 
 kotlin {
@@ -32,7 +31,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "DOLE"
-            packageVersion = "0.0.1"
+            packageVersion = "1.0.1"
             description = "DOLE Wallet"
             vendor = "Dominik Kipfer"
 

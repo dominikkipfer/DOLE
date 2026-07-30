@@ -25,17 +25,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.mohamedrejeb.calf.ui.gesture.adaptiveClickable
 
-@Composable
-expect fun SegmentedTabs(
-    options: List<String>,
-    selectedIndex: Int,
-    onSelected: (Int) -> Unit,
-    modifier: Modifier = Modifier
-)
-
 @Suppress("UseOfNonLambdaOffsetOverload")
 @Composable
-internal fun PillSegmentedTabs(
+fun SegmentedTabs(
     options: List<String>,
     selectedIndex: Int,
     onSelected: (Int) -> Unit,

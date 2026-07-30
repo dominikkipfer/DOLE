@@ -4,11 +4,13 @@ use crate::constants::{LONG_SIZE, SYNC_FRONTIER_ANNOUNCEMENT, SYNC_TX_BATCH};
 
 use super::{ID_LEN, id_hex_to_array};
 
+const FRONTIER_HEADER_LEN: usize = 5;
+
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) enum MessageKind {
     Frontier,
     TxBatch,
-    Tx
+    Tx,
 }
 
 impl MessageKind {
@@ -26,14 +28,14 @@ impl MessageKind {
         match self {
             Self::Frontier => "frontier",
             Self::TxBatch => "tx-batch",
-            Self::Tx => "tx"
+            Self::Tx => "tx",
         }
     }
 }
 
 pub(super) struct SyncReader<'a> {
     data: &'a [u8],
-    pos: usize
+    pos: usize,
 }
 
 impl<'a> SyncReader<'a> {
@@ -72,7 +74,7 @@ impl<'a> SyncReader<'a> {
     }
 }
 
-pub(crate) fn encode_frontier_announcement(entries: Vec<(String, u64)>) -> Vec<u8> {
+pub(crate) fn encode_frontier_announcement(entries: Vec<(String, u64)>, ble_limit: u16) -> Vec<u8> {
     let mut entries = entries
         .into_iter()
         .filter_map(|(branch, seq)| {
@@ -82,7 +84,9 @@ pub(crate) fn encode_frontier_announcement(entries: Vec<(String, u64)>) -> Vec<u
         .collect::<Vec<_>>();
 
     if entries.is_empty() {
-        return vec![SYNC_FRONTIER_ANNOUNCEMENT];
+        let mut msg = vec![SYNC_FRONTIER_ANNOUNCEMENT];
+        msg.extend_from_slice(&ble_limit.to_be_bytes());
+        return msg;
     }
     if entries.len() > u16::MAX as usize {
         entries.truncate(u16::MAX as usize);
@@ -93,9 +97,10 @@ pub(crate) fn encode_frontier_announcement(entries: Vec<(String, u64)>) -> Vec<u
         .iter()
         .map(|(_, seq)| ID_LEN + prefix_varint_len(*seq))
         .sum::<usize>();
-    let mut msg = Vec::with_capacity(3 + payload_len);
+    let mut msg = Vec::with_capacity(FRONTIER_HEADER_LEN + payload_len);
 
     msg.push(SYNC_FRONTIER_ANNOUNCEMENT);
+    msg.extend_from_slice(&ble_limit.to_be_bytes());
     msg.extend_from_slice(&count.to_be_bytes());
 
     for (id, seq) in entries {
@@ -106,12 +111,48 @@ pub(crate) fn encode_frontier_announcement(entries: Vec<(String, u64)>) -> Vec<u
     msg
 }
 
+pub(crate) fn split_frontier_entries(
+    entries: &[(String, u64)],
+    max_payload_bytes: usize,
+) -> Vec<Vec<(String, u64)>> {
+    let mut chunks = Vec::new();
+    let mut current: Vec<(String, u64)> = Vec::new();
+    let mut current_bytes = FRONTIER_HEADER_LEN;
+
+    for (branch, seq) in entries {
+        let entry_bytes = ID_LEN + prefix_varint_len(*seq);
+        if FRONTIER_HEADER_LEN + entry_bytes > max_payload_bytes {
+            continue;
+        }
+        if !current.is_empty() && current_bytes + entry_bytes > max_payload_bytes {
+            chunks.push(std::mem::take(&mut current));
+            current_bytes = FRONTIER_HEADER_LEN;
+        }
+        current.push((branch.clone(), *seq));
+        current_bytes += entry_bytes;
+    }
+
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+}
+
+pub(crate) fn frontier_ble_limit(payload: &[u8]) -> Option<u16> {
+    let mut reader = SyncReader::new(payload);
+    if reader.read_u8()? != SYNC_FRONTIER_ANNOUNCEMENT {
+        return None;
+    }
+    reader.read_u16()
+}
+
 pub(crate) fn decode_frontier_announcement(payload: &[u8]) -> Option<HashMap<String, u64>> {
     let mut reader = SyncReader::new(payload);
 
     if reader.read_u8()? != SYNC_FRONTIER_ANNOUNCEMENT {
         return None;
     }
+    reader.read_u16()?;
 
     if reader.is_done() {
         return Some(HashMap::new());
@@ -152,7 +193,11 @@ pub(crate) fn decode_transaction_batch(payload: &[u8]) -> Option<Vec<Vec<u8>>> {
 
 pub(super) fn group_u64_len_code(value: u64) -> u8 {
     let bytes = value.to_le_bytes();
-    let len = bytes.iter().rposition(|byte| *byte != 0).map(|index| index + 1).unwrap_or(1);
+    let len = bytes
+        .iter()
+        .rposition(|byte| *byte != 0)
+        .map(|index| index + 1)
+        .unwrap_or(1);
     (len - 1) as u8
 }
 

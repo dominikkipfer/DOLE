@@ -2,9 +2,12 @@ mod frames;
 mod tx;
 
 pub(crate) use frames::{
-    MessageKind, decode_frontier_announcement, decode_transaction_batch, encode_frontier_announcement
+    MessageKind, decode_frontier_announcement, decode_transaction_batch,
+    encode_frontier_announcement, frontier_ble_limit, split_frontier_entries,
 };
-pub(crate) use tx::{SyncTx, TxHeader, decode_tx_message, encode_tx_msg, tx_label_from_type, type_from_tx_label};
+pub(crate) use tx::{
+    SyncTx, TxHeader, decode_tx_message, encode_tx_msg, tx_label_from_type, type_from_tx_label,
+};
 
 use crate::constants::{ID_SIZE, SIGNATURE_SIZE};
 
@@ -15,7 +18,7 @@ pub(crate) fn is_valid_protocol_payload(payload: &[u8], kind: MessageKind) -> bo
     match kind {
         MessageKind::Frontier => decode_frontier_announcement(payload).is_some(),
         MessageKind::TxBatch => decode_transaction_batch(payload).is_some(),
-        MessageKind::Tx => tx::has_valid_tx_shape(payload)
+        MessageKind::Tx => tx::has_valid_tx_shape(payload),
     }
 }
 

@@ -27,7 +27,7 @@ struct iosAppApp: App {
         WindowGroup {
             ZStack {
                 ContentView(viewModel: viewModel)
-                if scenePhase != .active && viewModel.isPrivacySensitiveScreen() {
+                if scenePhase != .active {
                     Rectangle().fill(.regularMaterial).ignoresSafeArea()
                 }
             }

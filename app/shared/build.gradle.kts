@@ -11,7 +11,6 @@ plugins {
     alias(libs.plugins.kotlin.plugin.compose)
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.kotlin.serialization)
-    alias(libs.plugins.metro)
 }
 
 val jdkVersion = libs.versions.java.get().toInt()
@@ -45,7 +44,7 @@ fun Exec.cargoCommand(vararg cargoArgs: String) {
 val buildHostRust = tasks.register<Exec>("buildHostRust") {
     dependsOn(generateConstantsTask)
     workingDir = coreDir
-    cargoCommand("build", "--release")
+    cargoCommand("build", "--release", "--features", "bench-workload")
 }
 
 val generateUniffiBindings = tasks.register<Exec>("generateUniffiBindings") {
@@ -143,14 +142,6 @@ kotlin {
                 implementation(libs.jna)
             }
         }
-
-        if (HostManager.hostIsMac) {
-            named("iosMain") {
-                dependencies {
-                    implementation(libs.backdrop)
-                }
-            }
-        }
     }
 }
 
@@ -165,7 +156,7 @@ val syncJvmRustBinaries = tasks.register<Copy>("syncJvmRustBinaries") {
 val buildAndroidRust = tasks.register<Exec>("buildAndroidRust") {
     dependsOn(generateConstantsTask)
     workingDir = coreDir
-    cargoCommand("ndk", "-t", "arm64-v8a", "-o", "${coreDir}/dist/android/jniLibs", "build", "--release")
+    cargoCommand("ndk", "-t", "arm64-v8a", "-o", "${coreDir}/dist/android/jniLibs", "build", "--release", "--features", "bench-workload")
 }
 
 val syncAndroidRustBinaries = tasks.register<Copy>("syncAndroidRustBinaries") {
@@ -178,7 +169,14 @@ val buildIosRust = tasks.register<Exec>("buildIosRust") {
     dependsOn(generateConstantsTask)
     workingDir = coreDir
     environment("IPHONEOS_DEPLOYMENT_TARGET", "26.0")
-    cargoCommand("build", "--target", "aarch64-apple-ios", "--release")
+    cargoCommand("build", "--target", "aarch64-apple-ios", "--release", "--features", "bench-workload")
+}
+
+val buildIosSimulatorRust = tasks.register<Exec>("buildIosSimulatorRust") {
+    dependsOn(generateConstantsTask)
+    workingDir = coreDir
+    environment("IPHONEOS_DEPLOYMENT_TARGET", "26.0")
+    cargoCommand("build", "--target", "aarch64-apple-ios-sim", "--release", "--features", "bench-workload")
 }
 
 val generateUniffiSwiftBindings = tasks.register<Exec>("generateUniffiSwiftBindings") {
@@ -208,7 +206,7 @@ if (HostManager.hostIsMac) {
     tasks.matching {
         it.name.contains("Ios", ignoreCase = true) && (it.name.contains("XCFramework", ignoreCase = true) || it.name.startsWith("link"))
     }.configureEach {
-        dependsOn(generateUniffiSwiftBindings)
+        dependsOn(generateUniffiSwiftBindings, buildIosSimulatorRust)
     }
 }
 

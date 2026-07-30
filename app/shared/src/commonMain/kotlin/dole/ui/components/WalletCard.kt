@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import dole.data.models.StoredAccount
 
 val LocalCardPulse = compositionLocalOf { 0f }
+val LocalBottomBarInset = compositionLocalOf { 0.dp }
 
 private fun String.splitInHalves(): String {
     if (length < 24) return this
@@ -289,7 +290,7 @@ fun BoxScope.CardChip(scaleFactor: Float) {
             .border(width = borderSize, color = Color.Black, shape = RoundedCornerShape(cornerRadius))
             .clip(RoundedCornerShape(cornerRadius))
     ) {
-        SimpleGoldChip()
+        GoldChip()
     }
 }
 
@@ -325,7 +326,7 @@ fun BoxScope.CardId(account: StoredAccount, showFullId: Boolean, scaleFactor: Fl
         style = TextStyle(lineHeight = fontSize * 1.5f),
         modifier = Modifier
             .align(Alignment.BottomStart)
-            .padding(bottom = 18.dp * scaleFactor, start = 20.dp * scaleFactor, end = 36.dp * scaleFactor)
+            .padding(bottom = 18.dp * scaleFactor, start = 20.dp * scaleFactor, end = 20.dp * scaleFactor)
             .then(if (onIdClick != null) Modifier.clickable(interactionSource = null, indication = null) {
                 onIdClick()
             } else Modifier)
@@ -381,7 +382,7 @@ private fun EdgeLabelTexts(
 }
 
 @Composable
-fun SimpleGoldChip() {
+fun GoldChip() {
     val goldLight = Color(0xFFFDD835)
     val goldDark = Color(0xFFFBC02D)
 

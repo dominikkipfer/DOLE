@@ -4,7 +4,6 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose)
     alias(libs.plugins.kotlin.plugin.compose)
-    alias(libs.plugins.metro)
 }
 
 val jdkVersion = libs.versions.java.get()

@@ -15,6 +15,7 @@ target/
 /hub/src/constants.rs
 *.dll
 *.so
+*.dylib
 
 # Mobile Tools for Java (J2ME)
 .mtj.tmp/
@@ -42,6 +43,7 @@ replay_pid*
 build/
 .gradle/
 .kotlin/
+app/iosApp/xcode-build-shared.log
 
 # --------------------
 # IDE - IntelliJ IDEA

@@ -4,6 +4,8 @@ import dole.viewmodel.PeerConnection
 import dole.viewmodel.TransportStatus
 
 expect object CoreWrapper {
+    val isBleSupported: Boolean
+
     fun startGlobalSync(storagePath: String)
     fun stopGlobalSync()
     fun initLedger(onStateUpdated: (Long, String) -> Unit, storagePath: String, publicKeyId: String, publicKeyFull: String)
@@ -23,6 +25,14 @@ expect object CoreWrapper {
     fun stopBleAdvertising()
     fun setInternetEnabled(enabled: Boolean)
     fun setIrohEnabled(enabled: Boolean)
+    fun localSessionId(): String
     fun connectedPeers(): List<PeerConnection>
     fun transportStatus(): TransportStatus
+
+    fun benchSetMode(enabled: Boolean)
+    fun benchModeEnabled(): Boolean
+    fun benchGenerateWorkload(storagePath: String): Int
+    fun benchRunStore(storagePath: String): Int
+    fun benchRunLatency(storagePath: String): Boolean
+    fun benchLatencyReport(): String?
 }

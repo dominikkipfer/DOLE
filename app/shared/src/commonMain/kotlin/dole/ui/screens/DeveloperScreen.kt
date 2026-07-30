@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -39,10 +40,13 @@ import com.mohamedrejeb.calf.ui.dialog.AdaptiveAlertDialog
 import com.mohamedrejeb.calf.ui.dialog.uikit.AlertDialogIosActionStyle
 import dole.viewmodel.PeerConnection
 import dole.ui.components.AppSwitchButton
+import dole.ui.components.LocalBottomBarInset
 import dole.ui.components.SegmentedTabs
 import dole.ui.components.EntryRow
 import dole.ui.theme.ThemeMode
 import dole.ui.theme.DoleBlue
+import dole.core.CoreWrapper
+import dole.viewmodel.BenchmarkKind
 import dole.viewmodel.WalletViewModel
 
 @Composable
@@ -50,10 +54,11 @@ fun DeveloperScreen(viewModel: WalletViewModel) {
     var showDeleteAccountsConfirm by remember { mutableStateOf(false) }
     var showDeleteLedgerConfirm by remember { mutableStateOf(false) }
     var showDisableConfirm by remember { mutableStateOf(false) }
+    val localSessionId = remember { CoreWrapper.localSessionId() }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
-        contentPadding = PaddingValues(bottom = 32.dp)
+        contentPadding = PaddingValues(bottom = 32.dp + LocalBottomBarInset.current)
     ) {
         item(key = "header") {
             Text(
@@ -67,22 +72,24 @@ fun DeveloperScreen(viewModel: WalletViewModel) {
 
         item(key = "network-title") { SectionTitle("Network") }
 
-        item(key = "ble") {
-            Box(Modifier.padding(horizontal = 24.dp)) {
-                AppSwitchButton(
-                    title = "BLE",
-                    icon = Icons.Default.Bluetooth,
-                    iconActive = viewModel.developer.status.ble,
-                    checked = viewModel.developer.isBleEnabled,
-                    onCheckedChange = { viewModel.developer.enableBle(it) }
-                )
+        if (CoreWrapper.isBleSupported) {
+            item(key = "ble") {
+                Box(Modifier.padding(horizontal = 24.dp)) {
+                    AppSwitchButton(
+                        title = "BLE",
+                        icon = Icons.Default.Bluetooth,
+                        iconActive = viewModel.developer.status.ble,
+                        checked = viewModel.developer.isBleEnabled,
+                        onCheckedChange = { viewModel.developer.enableBle(it) }
+                    )
+                }
             }
         }
 
         item(key = "iroh") {
             Box(Modifier.padding(horizontal = 24.dp)) {
                 AppSwitchButton(
-                    title = "Iroh",
+                    title = "mDNS",
                     icon = Icons.Default.Wifi,
                     iconActive = viewModel.developer.status.iroh,
                     checked = viewModel.developer.isIrohEnabled,
@@ -103,7 +110,7 @@ fun DeveloperScreen(viewModel: WalletViewModel) {
             }
         }
 
-        item(key = "peers-title") { SectionTitle("Connected peers") }
+        item(key = "peers-title") { SectionTitle(localSessionId) }
 
         if (viewModel.developer.peers.isEmpty()) {
             item(key = "peers-empty") {
@@ -122,15 +129,43 @@ fun DeveloperScreen(viewModel: WalletViewModel) {
             }
         }
 
-        item(key = "appearance-title") { SectionTitle("Appearance") }
+        item(key = "bench-mode") {
+            Box(Modifier.padding(horizontal = 24.dp)) {
+                AppSwitchButton(
+                    title = "Benchmark mode",
+                    icon = Icons.Default.Science,
+                    iconActive = viewModel.isBenchmarkMode,
+                    checked = viewModel.isBenchmarkMode,
+                    onCheckedChange = { viewModel.enableBenchmarkMode(it) }
+                )
+            }
+        }
 
-        item(key = "theme") {
-            SegmentedTabs(
-                options = ThemeMode.entries.map { it.label() },
-                selectedIndex = viewModel.developer.themeMode.ordinal,
-                onSelected = { viewModel.developer.selectThemeMode(ThemeMode.entries[it]) },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(44.dp)
-            )
+        if (viewModel.isBenchmarkMode) {
+            item(key = "bench-workload") {
+                Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                    SettingsMenuButton("Workload generator", color = DoleBlue) {
+                        viewModel.runBenchmark(BenchmarkKind.WORKLOAD)
+                    }
+                }
+            }
+
+            item(key = "bench-storage") {
+                Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                    SettingsMenuButton("Local storage", color = DoleBlue) {
+                        viewModel.runBenchmark(BenchmarkKind.STORE)
+                    }
+                }
+            }
+
+            item(key = "bench-latency") {
+                Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                    SettingsMenuButton("Latency", color = DoleBlue) {
+                        viewModel.runBenchmark(BenchmarkKind.LATENCY)
+                    }
+                }
+            }
+
         }
 
         item(key = "diagnostics-title") { SectionTitle("Diagnostics") }
@@ -145,6 +180,17 @@ fun DeveloperScreen(viewModel: WalletViewModel) {
                     )
                 )
             }
+        }
+
+        item(key = "appearance-title") { SectionTitle("Appearance") }
+
+        item(key = "theme") {
+            SegmentedTabs(
+                options = ThemeMode.entries.map { it.label() },
+                selectedIndex = viewModel.developer.themeMode.ordinal,
+                onSelected = { viewModel.developer.selectThemeMode(ThemeMode.entries[it]) },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(44.dp)
+            )
         }
 
         item(key = "delete-accounts") {
@@ -284,8 +330,10 @@ private fun PeerRow(peer: PeerConnection) {
         titleEllipsized = true,
         trailing = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                TransportIcon(Icons.Default.Bluetooth, "BLE", peer.ble)
-                Spacer(Modifier.width(12.dp))
+                if (CoreWrapper.isBleSupported) {
+                    TransportIcon(Icons.Default.Bluetooth, "BLE", peer.ble)
+                    Spacer(Modifier.width(12.dp))
+                }
                 TransportIcon(Icons.Default.Wifi, "Local network", peer.mdns)
                 Spacer(Modifier.width(12.dp))
                 TransportIcon(Icons.Default.Public, "Internet", peer.internet)

@@ -21,8 +21,15 @@ interface IosCore {
 	fun stopBleAdvertising()
 	fun setInternetEnabled(enabled: Boolean)
 	fun setIrohEnabled(enabled: Boolean)
+	fun localSessionId(): String
 	fun connectedPeers(): List<PeerConnection>
 	fun transportStatus(): TransportStatus
+	fun benchSetMode(enabled: Boolean)
+	fun benchModeEnabled(): Boolean
+	fun benchGenerateWorkload(storagePath: String): Int
+	fun benchRunStore(storagePath: String): Int
+	fun benchRunLatency(storagePath: String): Boolean
+	fun benchLatencyReport(): String?
 }
 
 private var iosCore: IosCore? = null
@@ -32,6 +39,7 @@ fun installIosCore(core: IosCore) {
 }
 
 actual object CoreWrapper {
+	actual val isBleSupported: Boolean = false
 
 	actual fun startGlobalSync(storagePath: String) {
 		iosCore?.startGlobalSync(storagePath)
@@ -101,6 +109,8 @@ actual object CoreWrapper {
 		iosCore?.setIrohEnabled(enabled)
 	}
 
+	actual fun localSessionId(): String = iosCore?.localSessionId() ?: ""
+
 	actual fun connectedPeers(): List<PeerConnection> {
 		return iosCore?.connectedPeers() ?: emptyList()
 	}
@@ -108,4 +118,21 @@ actual object CoreWrapper {
 	actual fun transportStatus(): TransportStatus {
 		return iosCore?.transportStatus() ?: TransportStatus(false, false, false)
 	}
+
+	actual fun benchSetMode(enabled: Boolean) {
+		iosCore?.benchSetMode(enabled)
+	}
+
+	actual fun benchModeEnabled(): Boolean = iosCore?.benchModeEnabled() ?: false
+
+	actual fun benchGenerateWorkload(storagePath: String): Int =
+		iosCore?.benchGenerateWorkload(storagePath) ?: 0
+
+	actual fun benchRunStore(storagePath: String): Int =
+		iosCore?.benchRunStore(storagePath) ?: 0
+
+	actual fun benchRunLatency(storagePath: String): Boolean =
+		iosCore?.benchRunLatency(storagePath) ?: false
+
+	actual fun benchLatencyReport(): String? = iosCore?.benchLatencyReport()
 }

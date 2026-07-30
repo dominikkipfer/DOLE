@@ -4,15 +4,19 @@ version = "0.0.1"
 edition = "2024"
 
 [lib]
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [[bin]]
 name = "uniffi-bindgen"
 path = "uniffi-bindgen.rs"
 
+[features]
+bench = []
+bench-workload = ["bench"]
+
 [dependencies]
 uniffi = { version = "0.32.0", features = ["cli"] }
-gix = { version = "0.86.0", features = ["max-performance"] }
+gix = { version = "0.86.0", default-features = false, features = ["max-performance", "sha1"] }
 sha2 = "0.11.0"
 hex = "0.4.3"
 modular-bitfield = "0.13.1"
@@ -22,9 +26,11 @@ iroh-gossip = "0.101.0"
 swarm-discovery = "0.6.3"
 data-encoding = "2.11.0"
 getrandom = "0.4.3"
-tokio = { version = "1.53.1", features = ["full"] }
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 n0-future = "0.3.2"
-reqwest = { version = "0.13.4", default-features = false, features = ["rustls"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls-no-provider"] }
+rustls = { version = "=0.23.40", features = ["aws-lc-rs"] }
+webpki-roots = "1.0.9"
 
 log = "0.4.33"
 [target.'cfg(not(target_os = "android"))'.dependencies]
@@ -37,8 +43,3 @@ ndk-context = "0.1.1"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = ["Devices_Bluetooth", "Devices_Bluetooth_Advertisement", "Foundation", "Storage_Streams", "Win32_System_WinRT"] }
-
-[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
-objc2 = "0.6.4"
-objc2-core-bluetooth = "0.3.2"
-objc2-foundation = "0.3.2"

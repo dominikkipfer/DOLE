@@ -15,10 +15,17 @@ nonisolated private func rustStartBleAdvertising(_ path: String) -> Bool { start
 nonisolated private func rustStopBleAdvertising() { stopBleAdvertising() }
 nonisolated private func rustSetInternetEnabled(_ enabled: Bool) { setInternetEnabled(enabled: enabled) }
 nonisolated private func rustSetIrohEnabled(_ enabled: Bool) { setIrohEnabled(enabled: enabled) }
+nonisolated private func rustLocalSessionId() -> String { localSessionId() }
 nonisolated private func rustTransportStatus() -> SharedTransportStatus {
     let status = transportStatus()
     return SharedTransportStatus(ble: status.ble, iroh: status.iroh, internet: status.internet)
 }
+nonisolated private func rustBenchSetMode(_ enabled: Bool) { benchSetMode(enabled: enabled) }
+nonisolated private func rustBenchModeEnabled() -> Bool { benchModeEnabled() }
+nonisolated private func rustBenchGenerateWorkload(_ path: String) -> UInt32 { benchGenerateWorkload(storagePath: path) }
+nonisolated private func rustBenchRunStore(_ path: String) -> UInt32 { benchRunStore(storagePath: path) }
+nonisolated private func rustBenchRunLatency(_ path: String) -> Bool { benchRunLatency(storagePath: path) }
+nonisolated private func rustBenchLatencyReport() -> String? { benchLatencyReport() }
 nonisolated private func rustConnectedPeers() -> [SharedPeerConnection] {
     connectedPeers().map {
         SharedPeerConnection(sessionId: $0.sessionId, ble: $0.ble, mdns: $0.mdns, internet: $0.internet)
@@ -114,11 +121,39 @@ nonisolated final class CoreBridge: NSObject, IosCore, @unchecked Sendable {
         rustSetIrohEnabled(enabled)
     }
 
+    func localSessionId() -> String {
+        rustLocalSessionId()
+    }
+
     func connectedPeers() -> [SharedPeerConnection] {
         rustConnectedPeers()
     }
 
     func transportStatus() -> SharedTransportStatus {
         rustTransportStatus()
+    }
+
+    func benchSetMode(enabled: Bool) {
+        rustBenchSetMode(enabled)
+    }
+
+    func benchModeEnabled() -> Bool {
+        rustBenchModeEnabled()
+    }
+
+    func benchGenerateWorkload(storagePath: String) -> Int32 {
+        Int32(rustBenchGenerateWorkload(storagePath))
+    }
+
+    func benchRunStore(storagePath: String) -> Int32 {
+        Int32(rustBenchRunStore(storagePath))
+    }
+
+    func benchRunLatency(storagePath: String) -> Bool {
+        rustBenchRunLatency(storagePath)
+    }
+
+    func benchLatencyReport() -> String? {
+        rustBenchLatencyReport()
     }
 }

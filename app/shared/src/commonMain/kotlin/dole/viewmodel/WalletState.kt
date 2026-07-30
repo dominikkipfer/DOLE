@@ -46,3 +46,5 @@ data class TransportStatus(
     val iroh: Boolean,
     val internet: Boolean
 )
+
+enum class BenchmarkKind { WORKLOAD, STORE, LATENCY }

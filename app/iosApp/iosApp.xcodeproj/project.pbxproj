@@ -129,6 +129,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 0AD560F42F93E4C400C2801F /* Build configuration list for PBXNativeTarget "iosApp" */;
 			buildPhases = (
+				0ADE850B2F9436500035D3E7 /* Build shared XCFramework */,
 				0AD560E52F93E4A000C2801F /* Sources */,
 				0AD560E62F93E4A000C2801F /* Frameworks */,
 				0AD560E72F93E4A000C2801F /* Resources */,
@@ -192,6 +193,24 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		0ADE850B2F9436500035D3E7 /* Build shared XCFramework */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Build shared XCFramework";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/bin/sh \"$SRCROOT/build-shared-framework.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		0AD560E52F93E4A000C2801F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -242,7 +261,7 @@
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -306,7 +325,7 @@
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
@@ -353,7 +372,8 @@
 				);
 				LIBRARY_SEARCH_PATHS = "";
 				MARKETING_VERSION = 0.0.1;
-				OTHER_LDFLAGS = "$(SRCROOT)/../../core/target/aarch64-apple-ios/release/libcore.a";
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = "$(SRCROOT)/../../core/target/aarch64-apple-ios/release/libcore.a";
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = "$(SRCROOT)/../../core/target/aarch64-apple-ios-sim/release/libcore.a";
 				PRODUCT_BUNDLE_IDENTIFIER = dole.iosApp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -396,7 +416,8 @@
 				);
 				LIBRARY_SEARCH_PATHS = "";
 				MARKETING_VERSION = 0.0.1;
-				OTHER_LDFLAGS = "$(SRCROOT)/../../core/target/aarch64-apple-ios/release/libcore.a";
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = "$(SRCROOT)/../../core/target/aarch64-apple-ios/release/libcore.a";
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = "$(SRCROOT)/../../core/target/aarch64-apple-ios-sim/release/libcore.a";
 				PRODUCT_BUNDLE_IDENTIFIER = dole.iosApp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;

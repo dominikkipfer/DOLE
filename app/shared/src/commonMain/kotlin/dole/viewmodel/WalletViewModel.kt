@@ -45,6 +45,7 @@ class WalletViewModel(
     private val queueMutex = Mutex()
     private var walletService: WalletService? = null
     private var sessionPin: String? = null
+    private var sessionPublicKeyHex: String? = null
 
     val developer = DeveloperSettings(
         settings = settings,
@@ -280,14 +281,21 @@ class WalletViewModel(
         CoreWrapper.initLedger(observerListener, storagePath, "", "")
     }
 
+    private fun restartLedgerListener() {
+        val id = currentId
+        if (id == null) {
+            CoreWrapper.initLedger(observerListener, storagePath, "", "")
+            return
+        }
+        CoreWrapper.initLedger(rustListener, storagePath, id, sessionPublicKeyHex ?: "")
+    }
+
     init {
         startCardPolling()
         startNetworkObserver()
     }
 
     fun onNetworkPermissionsGranted() = developer.onPermissionsGranted()
-
-    fun onBluetoothAvailabilityChanged(available: Boolean) = developer.onBluetoothAvailabilityChanged(available)
 
     fun stopNetworkServices() = developer.stop()
 
@@ -301,7 +309,7 @@ class WalletViewModel(
         balance = 0L
         isFirstSync = true
         CoreWrapper.shutdown()
-        startNetworkObserver()
+        restartLedgerListener()
     }
 
     fun selectAccountToLogin(acc: StoredAccount) {
@@ -340,7 +348,7 @@ class WalletViewModel(
                         isMinter = accounts.isMinter(acc.id)
                         errorMessage = null
                         currentScreen = AppScreenState.DASHBOARD
-                        
+
                         ScreenCaptureProtection.setBlocked(preferences.isScreenCaptureBlocked(acc.id))
 
                         if (isCardConnected && currentDetectedCardId == acc.id) {
@@ -348,6 +356,7 @@ class WalletViewModel(
                             processSyncQueue()
                         }
 
+                        sessionPublicKeyHex = fullPubKeyHex
                         CoreWrapper.initLedger(rustListener, storagePath, acc.id, fullPubKeyHex ?: "")
                     }
                 } else {
@@ -372,6 +381,7 @@ class WalletViewModel(
         ScreenCaptureProtection.setBlocked(false)
         currentId = null
         sessionPin = null
+        sessionPublicKeyHex = null
         currentScreen = AppScreenState.HOME
         pendingActions = emptyList()
         _fullHistory.clear()
@@ -607,8 +617,6 @@ class WalletViewModel(
     }
 
     fun goToSettings() { currentScreen = AppScreenState.SETTINGS }
-
-    fun isPrivacySensitiveScreen(): Boolean = currentScreen == AppScreenState.DASHBOARD || currentScreen == AppScreenState.SETTINGS
     
     private var relockAccount: StoredAccount? = null
 
@@ -624,6 +632,44 @@ class WalletViewModel(
     fun onAppForeground() {
         relockAccount?.let { selectAccountToLogin(it) }
         relockAccount = null
+    }
+
+    var isBenchmarkMode by mutableStateOf(false); private set
+
+    fun enableBenchmarkMode(enabled: Boolean) {
+        isBenchmarkMode = enabled
+        CoreWrapper.benchSetMode(enabled)
+        if (enabled) {
+            stopCardPolling()
+        } else {
+            startCardPolling()
+        }
+        developer.onPermissionsGranted()
+    }
+
+    fun runBenchmark(kind: BenchmarkKind) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val message = when (kind) {
+                BenchmarkKind.WORKLOAD -> {
+                    val count = CoreWrapper.benchGenerateWorkload(storagePath)
+                    "Workload ready: $count transactions."
+                }
+                BenchmarkKind.STORE -> {
+                    val count = CoreWrapper.benchRunStore(storagePath)
+                    "Local storage measured over $count transactions."
+                }
+                BenchmarkKind.LATENCY -> {
+                    if (CoreWrapper.benchRunLatency(storagePath)) {
+                        "Latency commit sent."
+                    } else {
+                        "Latency needs a workload."
+                    }
+                }
+            }
+            withContext(Dispatchers.Main) {
+                showUserMessage(message)
+            }
+        }
     }
 
     fun isScreenCaptureBlocked(): Boolean {
@@ -719,6 +765,11 @@ class WalletViewModel(
 
     fun getPeerName(id: String): String? {
         return availableAccounts.find { it.id == id }?.name ?: knownNetworkPeers.find { it.id == id }?.label
+    }
+
+    private fun stopCardPolling() {
+        cardPollingJob?.cancel()
+        cardPollingJob = null
     }
 
     private fun startCardPolling() {

@@ -126,11 +126,13 @@ dependencies {
 
 val confFile: File = rootProject.file("constants.conf")
 val tomlText = if (confFile.exists()) confFile.readText() else ""
-val appletAid = """APPLET_AID_HEX\s*=\s*"([A-Fa-f0-9]+)"""".toRegex().find(tomlText)?.groupValues?.get(1)
+fun confHex(key: String): String? = """$key\s*=\s*"([A-Fa-f0-9]+)"""".toRegex().find(tomlText)?.groupValues?.get(1)
+
+val appletAid = confHex("APPLET_AID_HEX")
 val pkgAid = appletAid?.substring(0, 10)
 
 val ndefModuleAid = pkgAid?.plus("02")
-val ndefInstanceAid = "D2760000850101"
+val ndefInstanceAid = confHex("NDEF_INSTANCE_AID_HEX")
 
 val buildApplet = tasks.register("buildApplet") {
     group = "javacard"

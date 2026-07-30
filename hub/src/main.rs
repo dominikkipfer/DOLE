@@ -5,7 +5,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use constants::IROH_GOSSIP_TOPIC_BYTES;
-use iroh::{Endpoint, RelayMode, SecretKey, address_lookup::PkarrPublisher, endpoint::presets, protocol::Router};
+use iroh::{
+    Endpoint, RelayMode, SecretKey,
+    address_lookup::{DnsAddressLookup, PkarrPublisher, PkarrResolver},
+    endpoint::presets, protocol::Router
+};
 use iroh_gossip::{Gossip, TopicId};
 
 const KEY_BYTES: usize = 32;
@@ -28,6 +32,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .secret_key(secret_key)
         .relay_mode(RelayMode::Default)
         .address_lookup(PkarrPublisher::n0_dns())
+        .address_lookup(PkarrResolver::n0_dns())
+        .address_lookup(DnsAddressLookup::n0_dns())
         .bind_addr("0.0.0.0:0")?
         .bind()
         .await?;
