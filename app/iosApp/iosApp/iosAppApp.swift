@@ -1,11 +1,11 @@
 import SwiftUI
 import UIKit
-import UserNotifications
 import shared
 
 @main
 struct iosAppApp: App {
     @Environment(\.scenePhase) private var scenePhase
+    @State private var stoppedScanForNewCard = false
 
     private let viewModel: WalletViewModel
 
@@ -32,16 +32,14 @@ struct iosAppApp: App {
                 }
             }
             .onOpenURL { _ in
-                IosSmartCard.shared.beginScan()
+                handleCardActivation()
             }
             .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
                 guard activity.webpageURL != nil else { return }
-                IosSmartCard.shared.beginScan()
+                handleCardActivation()
             }
-            .onChange(of: scenePhase) { phase in
-                if phase == .active {
-                    UNUserNotificationCenter.current().removeAllDeliveredNotifications()
-                }
+            .task {
+                await stopNativeScanWhenNewCardOverlayAppears()
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
                 viewModel.onAppBackground()
@@ -49,6 +47,26 @@ struct iosAppApp: App {
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
                 viewModel.onAppForeground()
             }
+        }
+    }
+
+    private func handleCardActivation() {
+        IosSmartCard.shared.beginScan()
+    }
+
+    @MainActor
+    private func stopNativeScanWhenNewCardOverlayAppears() async {
+        while !Task.isCancelled {
+            if viewModel.isNewCardDetected {
+                if !stoppedScanForNewCard {
+                    stoppedScanForNewCard = true
+                    IosSmartCard.shared.completeSession()
+                }
+            } else {
+                stoppedScanForNewCard = false
+            }
+
+            try? await Task.sleep(for: .milliseconds(250))
         }
     }
 }

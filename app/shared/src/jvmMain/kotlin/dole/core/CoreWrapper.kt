@@ -4,7 +4,7 @@ import dole.viewmodel.PeerConnection
 import dole.viewmodel.TransportStatus
 
 actual object CoreWrapper {
-    actual val isBleSupported: Boolean = true
+    actual val isBleSupported: Boolean = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
 
     private var ledger: Ledger? = null
 

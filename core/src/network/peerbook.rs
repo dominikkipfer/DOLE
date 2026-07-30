@@ -69,6 +69,7 @@ struct BlePeerState {
 struct EndpointPeerState {
     mdns: bool,
     connected: bool,
+    connected_via_mdns: bool,
     iroh_seen_at: Option<Instant>,
 }
 
@@ -122,6 +123,7 @@ impl PeerBook {
     fn mark_iroh_seen(&mut self, endpoint_id: EndpointId, seen_at: Instant) {
         let entry = self.endpoints.entry(endpoint_id).or_default();
         entry.connected = true;
+        entry.connected_via_mdns |= entry.mdns;
         entry.iroh_seen_at = Some(seen_at);
         self.publish();
     }
@@ -129,12 +131,14 @@ impl PeerBook {
     pub(crate) fn mark_iroh_connected(&mut self, endpoint_id: EndpointId) {
         let entry = self.endpoints.entry(endpoint_id).or_default();
         entry.connected = true;
+        entry.connected_via_mdns = entry.mdns;
         self.publish();
     }
 
     pub(crate) fn mark_iroh_disconnected(&mut self, endpoint_id: EndpointId) {
         if let Some(entry) = self.endpoints.get_mut(&endpoint_id) {
             entry.connected = false;
+            entry.connected_via_mdns = false;
             entry.iroh_seen_at = None;
         }
         self.cleanup_endpoint(endpoint_id);
@@ -168,8 +172,8 @@ impl PeerBook {
         for session_id in sessions {
             if let Some(state) = self.ble_sessions.get_mut(&session_id)
                 && state
-                    .ble_seen_at
-                    .is_some_and(|seen_at| now.saturating_duration_since(seen_at) >= timeout)
+                .ble_seen_at
+                .is_some_and(|seen_at| now.saturating_duration_since(seen_at) >= timeout)
             {
                 state.ble_seen_at = None;
             }
@@ -181,8 +185,8 @@ impl PeerBook {
             if let Some(state) = self.endpoints.get_mut(&endpoint_id)
                 && !state.connected
                 && state
-                    .iroh_seen_at
-                    .is_some_and(|seen_at| now.saturating_duration_since(seen_at) >= timeout)
+                .iroh_seen_at
+                .is_some_and(|seen_at| now.saturating_duration_since(seen_at) >= timeout)
             {
                 state.iroh_seen_at = None;
             }
@@ -203,8 +207,6 @@ impl PeerBook {
     }
 
     fn connection_entries(&self) -> Vec<PeerConnection> {
-        let internet_enabled = super::mdns::is_internet_enabled();
-
         let hubs_active = self
             .endpoints
             .iter()
@@ -222,8 +224,8 @@ impl PeerBook {
                 PeerConnection {
                     session_id: session_id.short(),
                     ble: self.session_receiving_ble(session_id),
-                    mdns: state.mdns,
-                    internet: internet_enabled && state.connected,
+                    mdns: state.mdns || state.connected_via_mdns,
+                    internet: state.connected && !state.connected_via_mdns,
                 }
             })
             .collect::<Vec<_>>();

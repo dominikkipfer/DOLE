@@ -21,5 +21,10 @@ else
   REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 fi
 cd "$REPO_ROOT"
+
+if [ ! -x ./gradlew ]; then
+  chmod +x ./gradlew
+fi
+
 echo "Building shared XCFramework with JAVA_HOME=$JAVA_HOME"
 exec ./gradlew --console=plain :app:shared:assembleSharedReleaseXCFramework

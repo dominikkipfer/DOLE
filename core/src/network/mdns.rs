@@ -162,6 +162,8 @@ pub async fn run(
         HUB_BOOTSTRAP_INTERVAL,
     );
     hub_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut peer_join_interval = tokio::time::interval(Duration::from_secs(3));
+    peer_join_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
         tokio::select! {
@@ -178,6 +180,20 @@ pub async fn run(
                 if let Some(reason) = reason {
                     log::info!(target: LOG_TARGET, "retrying hub directory bootstrap reason={reason}");
                     spawn_directory_bootstrap(gossip_sender.clone());
+                }
+            }
+
+            _ = peer_join_interval.tick(), if discovery.is_some() => {
+                let peers = discovered_peers
+                    .difference(&connected_peers)
+                    .copied()
+                    .collect::<Vec<_>>();
+                if !peers.is_empty()
+                    && let Err(e) = gossip_sender.join_peers(peers).await
+                {
+                    let _ = event_tx.send(Event::TransportError(format!(
+                        "could not retry mDNS peers: {e:?}"
+                    )));
                 }
             }
 
