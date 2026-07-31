@@ -3,8 +3,8 @@ package dole.core
 import com.ditto.kotlin.Ditto
 import com.ditto.kotlin.DittoConfig
 import com.ditto.kotlin.DittoFactory
+import kotlinx.cinterop.ExperimentalForeignApi
 import platform.Foundation.NSFileManager
-import platform.Foundation.NSLog
 
 interface IosCore {
     fun bytesToHex(bytes: ByteArray): String
@@ -38,6 +38,7 @@ fun installIosCore(core: IosCore) {
 
 internal actual fun createPlatformDitto(config: DittoConfig): Ditto = DittoFactory.create(config = config)
 
+@OptIn(ExperimentalForeignApi::class)
 internal actual fun resetBenchmarkDirectory(path: String): Boolean {
     val manager = NSFileManager.defaultManager
     return path.endsWith("_benchmark_store") &&
@@ -45,13 +46,14 @@ internal actual fun resetBenchmarkDirectory(path: String): Boolean {
         manager.createDirectoryAtPath(path, true, null, null)
 }
 
+@OptIn(ExperimentalForeignApi::class)
 internal actual fun deleteBenchmarkDirectory(path: String): Boolean {
     val manager = NSFileManager.defaultManager
     return path.endsWith("_benchmark_store") && (!manager.fileExistsAtPath(path) || manager.removeItemAtPath(path, null))
 }
 
 internal actual fun logBenchmark(message: String) {
-    NSLog("%@", message)
+    println(message)
 }
 
 internal actual object NativeCore {

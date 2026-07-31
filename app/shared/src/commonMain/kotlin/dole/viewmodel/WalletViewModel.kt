@@ -635,6 +635,7 @@ class WalletViewModel(
     }
 
     var isBenchmarkMode by mutableStateOf(false); private set
+    private var benchmarkRunning = false
 
     fun enableBenchmarkMode(enabled: Boolean) {
         isBenchmarkMode = enabled
@@ -648,34 +649,52 @@ class WalletViewModel(
     }
 
     fun runBenchmark(kind: BenchmarkKind) {
+        if (benchmarkRunning) return
+        benchmarkRunning = true
         viewModelScope.launch(Dispatchers.IO) {
-            val message = when (kind) {
-                BenchmarkKind.WORKLOAD -> {
-                    val count = CoreWrapper.benchGenerateWorkload()
-                    "Workload generated: $count commits."
-                }
-                BenchmarkKind.SCALE -> {
-                    if (CoreWrapper.benchRunScale(storagePath)) {
-                        "Sync scale complete."
-                    } else {
-                        "Sync scale needs another benchmark peer."
+            try {
+                val message = runCatching {
+                    when (kind) {
+                        BenchmarkKind.WORKLOAD -> {
+                            val count = CoreWrapper.benchGenerateWorkload()
+                            if (count > 0) {
+                                "Workload generated: $count commits."
+                            } else {
+                                "Workload generation failed."
+                            }
+                        }
+                        BenchmarkKind.SCALE -> {
+                            if (CoreWrapper.benchRunScale(storagePath)) {
+                                "Sync scale complete."
+                            } else {
+                                "Sync scale needs another benchmark peer."
+                            }
+                        }
+                        BenchmarkKind.STORE -> {
+                            val count = CoreWrapper.benchRunStore(storagePath)
+                            CoreWrapper.benchStorageReport() ?: "Local storage measured over $count transactions."
+                        }
+                        BenchmarkKind.LATENCY -> {
+                            if (!CoreWrapper.benchHasWorkload()) {
+                                "Latency needs a workload."
+                            } else if (CoreWrapper.benchRunLatency(storagePath)) {
+                                "Latency commit sent."
+                            } else {
+                                "Latency is already running or needs another benchmark peer."
+                            }
+                        }
                     }
+                }.getOrElse {
+                    "Benchmark failed: ${it.message ?: it::class.simpleName.orEmpty()}"
                 }
-                BenchmarkKind.STORE -> {
-                    val count = CoreWrapper.benchRunStore(storagePath)
-                    CoreWrapper.benchStorageReport() ?: "Local storage measured over $count transactions."
+                withContext(Dispatchers.Main) {
+                    showUserMessage(message)
                 }
-                BenchmarkKind.LATENCY -> {
-                    if (!CoreWrapper.benchHasWorkload()) {
-                        "Latency needs a workload."
-                    } else if (CoreWrapper.benchRunLatency(storagePath)) {
-                        "Latency commit sent."
-                    } else {
-                        "Latency is already running or needs another benchmark peer."
-                    }
+            } finally {
+                withContext(Dispatchers.Main + NonCancellable) {
+                    benchmarkRunning = false
                 }
             }
-            withContext(Dispatchers.Main) { showUserMessage(message) }
         }
     }
 
