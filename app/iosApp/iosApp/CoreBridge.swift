@@ -1,92 +1,68 @@
 import Foundation
 import shared
 
-typealias SharedPeerConnection = shared.PeerConnection
-typealias SharedTransportStatus = shared.TransportStatus
+typealias SharedNativeLedgerTransaction = shared.NativeLedgerTransaction
 
-nonisolated private func rustStartGlobalSync(_ path: String) { startGlobalSync(storagePath: path) }
-nonisolated private func rustStopGlobalSync() { stopGlobalSync() }
 nonisolated private func rustBytesToHex(_ bytes: Data) -> String { bytesToHex(bytes: bytes) }
 nonisolated private func rustHexToBytes(_ value: String) -> Data { hexToBytes(s: value) }
 nonisolated private func rustGetPersonIdAsHex(_ pubKey: Data) -> String { getPersonIdAsHex(pubKey: pubKey) }
 nonisolated private func rustVerifyCardCertificate(_ pubKey: Data, _ cert: Data) -> Bool { verifyCardCertificate(pubKey: pubKey, cert: cert) }
-nonisolated private func rustResetLedger(_ path: String) -> Bool { resetLedger(storagePath: path) }
-nonisolated private func rustStartBleAdvertising(_ path: String) -> Bool { startBleAdvertising(storagePath: path) }
-nonisolated private func rustStopBleAdvertising() { stopBleAdvertising() }
-nonisolated private func rustSetInternetEnabled(_ enabled: Bool) { setInternetEnabled(enabled: enabled) }
-nonisolated private func rustSetIrohEnabled(_ enabled: Bool) { setIrohEnabled(enabled: enabled) }
-nonisolated private func rustLocalSessionId() -> String { localSessionId() }
-nonisolated private func rustTransportStatus() -> SharedTransportStatus {
-    let status = transportStatus()
-    return SharedTransportStatus(ble: status.ble, iroh: status.iroh, internet: status.internet)
+nonisolated private func rustPrepareGenesis(
+    _ publicKeyId: String,
+    _ publicKey: String,
+    _ sigHex: String,
+    _ certHex: String,
+    _ timestamp: Int64?
+) -> LedgerTransaction? {
+    prepareGenesisTransaction(
+        publicKeyId: publicKeyId,
+        publicKey: publicKey,
+        sigHex: sigHex,
+        certHex: certHex,
+        timestamp: timestamp
+    )
 }
-nonisolated private func rustBenchSetMode(_ enabled: Bool) { benchSetMode(enabled: enabled) }
-nonisolated private func rustBenchModeEnabled() -> Bool { benchModeEnabled() }
-nonisolated private func rustBenchGenerateWorkload(_ path: String) -> UInt32 { benchGenerateWorkload(storagePath: path) }
-nonisolated private func rustBenchRunStore(_ path: String) -> UInt32 { benchRunStore(storagePath: path) }
-nonisolated private func rustBenchRunLatency(_ path: String) -> Bool { benchRunLatency(storagePath: path) }
-nonisolated private func rustBenchLatencyReport() -> String? { benchLatencyReport() }
-nonisolated private func rustConnectedPeers() -> [SharedPeerConnection] {
-    connectedPeers().map {
-        SharedPeerConnection(sessionId: $0.sessionId, ble: $0.ble, mdns: $0.mdns, internet: $0.internet)
-    }
+nonisolated private func rustPrepareTransaction(
+    _ publicKey: String,
+    _ txType: String,
+    _ targetId: String,
+    _ goc: Int64,
+    _ seq: Int64,
+    _ sigHex: String,
+    _ timestamp: Int64?
+) -> LedgerTransaction? {
+    prepareLedgerTransaction(
+        publicKey: publicKey,
+        txType: txType,
+        targetId: targetId,
+        goc: goc,
+        seq: seq,
+        sigHex: sigHex,
+        timestamp: timestamp
+    )
+}
+nonisolated private func rustBenchmarkTransactions() -> [LedgerTransaction] {
+    benchGenerateTransactions()
+}
+
+nonisolated private func sharedTransaction(_ transaction: LedgerTransaction) -> SharedNativeLedgerTransaction {
+    SharedNativeLedgerTransaction(
+        id: transaction.id,
+        txType: transaction.txType,
+        author: transaction.author,
+        publicKey: transaction.publicKey,
+        certificate: transaction.certificate,
+        targetId: transaction.targetId,
+        goc: transaction.goc,
+        seq: transaction.seq,
+        timestamp: transaction.timestamp,
+        signature: transaction.signature
+    )
 }
 
 nonisolated final class CoreBridge: NSObject, IosCore, @unchecked Sendable {
-
     static func install() {
         CoreWrapperKt.installIosCore(core: CoreBridge())
-    }
-
-    func startGlobalSync(storagePath: String) {
-        rustStartGlobalSync(storagePath)
-    }
-
-    func stopGlobalSync() {
-        rustStopGlobalSync()
-    }
-
-    func doInitLedger(
-        onStateUpdated: @escaping (KotlinLong, String) -> Void,
-        storagePath: String,
-        publicKeyId: String,
-        publicKeyFull: String
-    ) {
-        AppEngine.shared.stateHandler = { balance, json in
-            onStateUpdated(KotlinLong(value: balance), json)
-        }
-        AppEngine.shared.ledger = Ledger.initLedger(
-            listener: AppEngine.shared,
-            storagePath: storagePath,
-            publicKeyId: publicKeyId,
-            publicKeyFull: publicKeyFull
-        )
-    }
-
-    func shutdown() {
-        AppEngine.shared.ledger?.shutdown()
-        AppEngine.shared.ledger = nil
-        AppEngine.shared.stateHandler = nil
-    }
-
-    func resetLedger(storagePath: String) -> Bool {
-        rustResetLedger(storagePath)
-    }
-
-    func genesis(sigHex: String, certHex: String) {
-        AppEngine.shared.ledger?.genesis(sigHex: sigHex, certHex: certHex)
-    }
-
-    func mint(goc: Int64, seq: Int64, sigHex: String) -> Bool {
-        AppEngine.shared.ledger?.mint(goc: goc, seq: seq, sigHex: sigHex) ?? false
-    }
-
-    func burn(goc: Int64, seq: Int64, sigHex: String) -> Bool {
-        AppEngine.shared.ledger?.burn(goc: goc, seq: seq, sigHex: sigHex) ?? false
-    }
-
-    func send(targetPubKey: String, goc: Int64, seq: Int64, sigHex: String) -> Bool {
-        AppEngine.shared.ledger?.send(targetPubKey: targetPubKey, goc: goc, seq: seq, sigHex: sigHex) ?? false
     }
 
     func bytesToHex(bytes: KotlinByteArray) -> String {
@@ -105,55 +81,38 @@ nonisolated final class CoreBridge: NSObject, IosCore, @unchecked Sendable {
         rustVerifyCardCertificate(data(from: pubKey), data(from: cert))
     }
 
-    func startBleAdvertising(storagePath: String) -> Bool {
-        rustStartBleAdvertising(storagePath)
+    func prepareGenesisTransaction(
+        publicKeyId: String,
+        publicKey: String,
+        sigHex: String,
+        certHex: String,
+        timestamp: KotlinLong?
+    ) -> SharedNativeLedgerTransaction? {
+        rustPrepareGenesis(publicKeyId, publicKey, sigHex, certHex, timestamp?.int64Value)
+            .map(sharedTransaction)
     }
 
-    func stopBleAdvertising() {
-        rustStopBleAdvertising()
+    func prepareLedgerTransaction(
+        publicKey: String,
+        txType: String,
+        targetId: String,
+        goc: Int64,
+        seq: Int64,
+        sigHex: String,
+        timestamp: KotlinLong?
+    ) -> SharedNativeLedgerTransaction? {
+        rustPrepareTransaction(
+            publicKey,
+            txType,
+            targetId,
+            goc,
+            seq,
+            sigHex,
+            timestamp?.int64Value
+        ).map(sharedTransaction)
     }
 
-    func setInternetEnabled(enabled: Bool) {
-        rustSetInternetEnabled(enabled)
-    }
-
-    func setIrohEnabled(enabled: Bool) {
-        rustSetIrohEnabled(enabled)
-    }
-
-    func localSessionId() -> String {
-        rustLocalSessionId()
-    }
-
-    func connectedPeers() -> [SharedPeerConnection] {
-        rustConnectedPeers()
-    }
-
-    func transportStatus() -> SharedTransportStatus {
-        rustTransportStatus()
-    }
-
-    func benchSetMode(enabled: Bool) {
-        rustBenchSetMode(enabled)
-    }
-
-    func benchModeEnabled() -> Bool {
-        rustBenchModeEnabled()
-    }
-
-    func benchGenerateWorkload(storagePath: String) -> Int32 {
-        Int32(rustBenchGenerateWorkload(storagePath))
-    }
-
-    func benchRunStore(storagePath: String) -> Int32 {
-        Int32(rustBenchRunStore(storagePath))
-    }
-
-    func benchRunLatency(storagePath: String) -> Bool {
-        rustBenchRunLatency(storagePath)
-    }
-
-    func benchLatencyReport() -> String? {
-        rustBenchLatencyReport()
+    func benchGenerateTransactions() -> [SharedNativeLedgerTransaction] {
+        rustBenchmarkTransactions().map(sharedTransaction)
     }
 }

@@ -7,6 +7,7 @@ agp                             = "9.3.1"
 android-compile-sdk             = "37"
 android-min-sdk                 = "26"
 jna                             = "5.19.1"
+ditto                           = "5.0.3"
 
 compose                         = "1.12.0-alpha02"
 compose-material-icon-extended  = "1.7.3"
@@ -35,6 +36,8 @@ navigationevent-compose         = { module = "org.jetbrains.androidx.navigatione
 compose-components-resources    = { module = "org.jetbrains.compose.components:components-resources", version.ref = "compose" }
 
 jna                             = { module = "net.java.dev.jna:jna", version.ref = "jna" }
+ditto-kotlin                    = { module = "com.ditto:ditto-kotlin", version.ref = "ditto" }
+ditto-binaries                  = { module = "com.ditto:ditto-binaries", version.ref = "ditto" }
 
 compose-material3               = { module = "org.jetbrains.compose.material3:material3", version.ref = "compose" }
 compose-material-icons-extended = { module = "org.jetbrains.compose.material:material-icons-extended", version.ref = "compose-material-icon-extended" }

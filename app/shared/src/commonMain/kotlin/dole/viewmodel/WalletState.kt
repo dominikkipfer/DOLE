@@ -37,14 +37,14 @@ data class PendingAction(
 data class PeerConnection(
     val sessionId: String,
     val ble: Boolean,
-    val mdns: Boolean,
+    val local: Boolean,
     val internet: Boolean
 )
 
 data class TransportStatus(
     val ble: Boolean,
-    val iroh: Boolean,
+    val local: Boolean,
     val internet: Boolean
 )
 
-enum class BenchmarkKind { WORKLOAD, STORE, LATENCY }
+enum class BenchmarkKind { WORKLOAD, SCALE, STORE, LATENCY }

@@ -101,19 +101,19 @@ class WalletService(private val card: SmartCard, private val pin: String, privat
         }
     }
 
-    fun mint(amount: Long) {
+    suspend fun mint(amount: Long) {
         openSession()
         val payload = ProtocolSerializer.buildMintBurnPayload(amount)
         recordOnLedger(card.processMint(payload), "Mint", CoreWrapper::mint)
     }
 
-    fun burn(amount: Long) {
+    suspend fun burn(amount: Long) {
         openSession()
         val payload = ProtocolSerializer.buildMintBurnPayload(amount)
         recordOnLedger(card.processBurn(payload), "Burn", CoreWrapper::burn)
     }
 
-    fun send(targetId: String, amount: Long, rustHistory: List<Transaction>) {
+    suspend fun send(targetId: String, amount: Long, rustHistory: List<Transaction>) {
         require(amount > 0) { "Amount must be > 0" }
         openSession()
 
@@ -133,10 +133,10 @@ class WalletService(private val card: SmartCard, private val pin: String, privat
         }
     }
 
-    private fun recordOnLedger(
+    private suspend fun recordOnLedger(
         response: ByteArray,
         label: String,
-        record: (goc: Long, seq: Long, sigHex: String) -> Boolean
+        record: suspend (goc: Long, seq: Long, sigHex: String) -> Boolean
     ) {
         val seq = ProtocolSerializer.parseSeqFromResponse(response)
         val goc = ProtocolSerializer.parseGocFromResponse(response)

@@ -36,49 +36,34 @@ class DeveloperSettings(
         ThemeMode.entries.find { it.name == settings.getStringOrNull(KEY_THEME_MODE) } ?: ThemeMode.SYSTEM
     ); private set
 
-    var isBleEnabled by mutableStateOf(CoreWrapper.isBleSupported && settings.getBoolean(KEY_BLE_ENABLED, true)); private set
-    var isIrohEnabled by mutableStateOf(settings.getBoolean(KEY_IROH_ENABLED, true)); private set
+    var isBleEnabled by mutableStateOf(settings.getBoolean(KEY_BLE_ENABLED, true)); private set
+    var isLocalEnabled by mutableStateOf(settings.getBoolean(KEY_LOCAL_ENABLED, true)); private set
     var isInternetEnabled by mutableStateOf(settings.getBoolean(KEY_INTERNET_ENABLED, true)); private set
 
-    var status by mutableStateOf(TransportStatus(ble = false, iroh = false, internet = false)); private set
+    var status by mutableStateOf(TransportStatus(false, false, false)); private set
     var peers by mutableStateOf<List<PeerConnection>>(emptyList()); private set
 
     private var isPermitted = false
-    private var isBluetoothAvailable = true
     private var isEngineRunning = false
-    private var isBleRunning = false
-
     private val lifecycle = Mutex()
-    private var retryJob: Job? = null
     private var pollJob: Job? = null
     private var tapCount = 0
 
     fun onPermissionsGranted() {
         isPermitted = true
-        CoreWrapper.setIrohEnabled(isIrohEnabled)
-        CoreWrapper.setInternetEnabled(isInternetEnabled)
+        CoreWrapper.refreshPermissions()
         applyTransports()
-        startRetryLoop()
         if (isEnabled) startPolling()
-    }
-
-    fun onBluetoothAvailabilityChanged(available: Boolean) {
-        isBluetoothAvailable = available
-        applyTransports()
     }
 
     fun stop() {
         isPermitted = false
-        retryJob?.cancel()
-        retryJob = null
         stopPolling()
-        if (isBleRunning) {
-            isBleRunning = false
-            CoreWrapper.stopBleAdvertising()
-        }
         if (isEngineRunning) {
             isEngineRunning = false
-            CoreWrapper.stopGlobalSync()
+            scope.launch(Dispatchers.IO) {
+                lifecycle.withLock { CoreWrapper.stopGlobalSync() }
+            }
         }
     }
 
@@ -94,9 +79,7 @@ class DeveloperSettings(
     fun enable(enabled: Boolean) {
         isEnabled = enabled
         settings.putBoolean(KEY_DEVELOPER_MODE, enabled)
-        if (enabled) {
-            startPolling()
-        } else {
+        if (enabled) startPolling() else {
             stopPolling()
             resetToDefaults()
         }
@@ -108,17 +91,15 @@ class DeveloperSettings(
         applyTransports()
     }
 
-    fun enableIroh(enabled: Boolean) {
-        isIrohEnabled = enabled
-        settings.putBoolean(KEY_IROH_ENABLED, enabled)
-        CoreWrapper.setIrohEnabled(enabled)
+    fun enableLocal(enabled: Boolean) {
+        isLocalEnabled = enabled
+        settings.putBoolean(KEY_LOCAL_ENABLED, enabled)
         applyTransports()
     }
 
     fun enableInternet(enabled: Boolean) {
         isInternetEnabled = enabled
         settings.putBoolean(KEY_INTERNET_ENABLED, enabled)
-        CoreWrapper.setInternetEnabled(enabled)
         applyTransports()
     }
 
@@ -129,17 +110,14 @@ class DeveloperSettings(
 
     fun resetToDefaults() {
         settings.remove(KEY_BLE_ENABLED)
-        settings.remove(KEY_IROH_ENABLED)
+        settings.remove(KEY_LOCAL_ENABLED)
         settings.remove(KEY_INTERNET_ENABLED)
         settings.remove(KEY_THEME_MODE)
 
         themeMode = ThemeMode.SYSTEM
-        isBleEnabled = CoreWrapper.isBleSupported && settings.getBoolean(KEY_BLE_ENABLED, true)
-        isIrohEnabled = settings.getBoolean(KEY_IROH_ENABLED, true)
-        isInternetEnabled = settings.getBoolean(KEY_INTERNET_ENABLED, true)
-
-        CoreWrapper.setIrohEnabled(isIrohEnabled)
-        CoreWrapper.setInternetEnabled(isInternetEnabled)
+        isBleEnabled = true
+        isLocalEnabled = true
+        isInternetEnabled = true
         applyTransports()
     }
 
@@ -153,7 +131,7 @@ class DeveloperSettings(
         }
     }
 
-    fun deleteAllTransactions() {
+    fun deleteAllCommits() {
         scope.launch(Dispatchers.IO) {
             val cleared = CoreWrapper.resetLedger(storagePath)
             withContext(Dispatchers.Main) {
@@ -168,30 +146,15 @@ class DeveloperSettings(
     }
 
     private fun applyTransports() {
-        val wantEngine = isPermitted && (isIrohEnabled || isBleEnabled || isInternetEnabled)
-        val wantBle = isPermitted && isBluetoothAvailable && isBleEnabled
-
-        if (wantEngine != isEngineRunning) {
-            isEngineRunning = wantEngine
-            scope.launch(Dispatchers.IO) {
-                lifecycle.withLock {
-                    if (wantEngine) CoreWrapper.startGlobalSync(storagePath) else CoreWrapper.stopGlobalSync()
-                }
-            }
-        }
-
-        if (wantBle != isBleRunning) {
-            isBleRunning = wantBle
-            scope.launch(Dispatchers.IO) {
-                val started = lifecycle.withLock {
-                    if (wantBle) {
-                        CoreWrapper.startBleAdvertising(storagePath)
-                    } else {
-                        CoreWrapper.stopBleAdvertising()
-                        false
-                    }
-                }
-                if (wantBle && !started) withContext(Dispatchers.Main) { isBleRunning = false }
+        CoreWrapper.setBleEnabled(isBleEnabled)
+        CoreWrapper.setLocalEnabled(isLocalEnabled)
+        CoreWrapper.setInternetEnabled(isInternetEnabled)
+        val wantEngine = isPermitted && (isLocalEnabled || isBleEnabled || isInternetEnabled)
+        if (wantEngine == isEngineRunning) return
+        isEngineRunning = wantEngine
+        scope.launch(Dispatchers.IO) {
+            lifecycle.withLock {
+                if (wantEngine) CoreWrapper.startGlobalSync(storagePath) else CoreWrapper.stopGlobalSync()
             }
         }
     }
@@ -215,32 +178,16 @@ class DeveloperSettings(
         pollJob?.cancel()
         pollJob = null
         peers = emptyList()
-        status = TransportStatus(ble = false, iroh = false, internet = false)
-    }
-
-    private fun startRetryLoop() {
-        if (retryJob != null) return
-        retryJob = scope.launch {
-            while (isActive) {
-                delay(BLE_RETRY_INTERVAL)
-                if (!isPermitted || !isBluetoothAvailable || !isBleEnabled) continue
-                val advertising = withContext(Dispatchers.IO) { CoreWrapper.transportStatus().ble }
-                if (!advertising) {
-                    isBleRunning = false
-                    applyTransports()
-                }
-            }
-        }
+        status = TransportStatus(false, false, false)
     }
 
     private companion object {
         const val KEY_DEVELOPER_MODE = "dev_mode_enabled"
-        const val KEY_IROH_ENABLED = "dev_iroh_enabled"
+        const val KEY_LOCAL_ENABLED = "dev_local_enabled"
         const val KEY_BLE_ENABLED = "dev_ble_enabled"
         const val KEY_INTERNET_ENABLED = "dev_internet_enabled"
         const val KEY_THEME_MODE = "dev_theme_mode"
 
         val POLL_INTERVAL = Constants.TRANSPORT_POLL_INTERVAL_MS.toLong().milliseconds
-        val BLE_RETRY_INTERVAL = Constants.BLE_RETRY_INTERVAL_MS.toLong().milliseconds
     }
 }

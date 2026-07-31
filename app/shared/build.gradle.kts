@@ -121,6 +121,7 @@ kotlin {
                 implementation(libs.multiplatform.settings)
                 implementation(libs.kotlinx.datetime)
                 implementation(libs.kotlinx.serialization.json)
+                implementation(libs.ditto.kotlin)
             }
         }
 
@@ -140,6 +141,7 @@ kotlin {
             dependencies {
                 implementation(libs.kotlinx.coroutines.swing)
                 implementation(libs.jna)
+                implementation(libs.ditto.binaries)
             }
         }
     }

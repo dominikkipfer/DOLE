@@ -1,12 +1,6 @@
 package dole
 
 import android.Manifest
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothManager
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.nfc.NfcAdapter
@@ -34,25 +28,6 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
     private lateinit var viewModel: WalletViewModel
     private val smartCard = AndroidSmartCard(null)
 
-    private val bluetoothStateReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            if (!::viewModel.isInitialized) return
-
-            when (intent?.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
-                BluetoothAdapter.STATE_TURNING_OFF, BluetoothAdapter.STATE_OFF -> {
-                    Log.i("DOLE", "Bluetooth off; stopping BLE transport")
-                    viewModel.developer.onBluetoothAvailabilityChanged(false)
-                }
-                BluetoothAdapter.STATE_ON -> {
-                    Log.i("DOLE", "Bluetooth back on; restarting BLE transport")
-                    viewModel.developer.onBluetoothAvailabilityChanged(true)
-                }
-            }
-        }
-    }
-
-    private external fun initNdkContext(context: Context)
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -60,13 +35,6 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
             System.loadLibrary("core")
         } catch (e: Throwable) {
             Log.e("DOLE", "Failed to load libcore.so", e)
-        }
-
-        try {
-            initNdkContext(this.applicationContext)
-            Log.i("DOLE", "ndk-context initialized")
-        } catch (e: Throwable) {
-            Log.e("DOLE", "ndk-context init failed", e)
         }
 
         nfcAdapter = NfcAdapter.getDefaultAdapter(this)
@@ -85,8 +53,6 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
         setContent {
             WalletApp(viewModel)
         }
-
-        registerReceiver(bluetoothStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
 
         if (checkPermissions()) startNetworkServices()
     }
@@ -121,9 +87,6 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
     }
 
     override fun onDestroy() {
-        try {
-            unregisterReceiver(bluetoothStateReceiver)
-        } catch (_: IllegalArgumentException) { }
         if (::viewModel.isInitialized) viewModel.stopNetworkServices()
         releaseMulticastLock()
         super.onDestroy()
@@ -142,7 +105,7 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
             grantResults.all { it == PackageManager.PERMISSION_GRANTED }
 
         if (granted) {
-            Log.i("DOLE", "Network permissions granted; starting sync and BLE broadcast")
+            Log.i("DOLE", "Network permissions granted; starting sync")
             startNetworkServices()
         } else {
             Log.w("DOLE", "Network permissions denied; sync engine not started")
@@ -151,8 +114,6 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
 
     private fun startNetworkServices() {
         acquireMulticastLock()
-        val adapter = (getSystemService(BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
-        viewModel.developer.onBluetoothAvailabilityChanged(adapter?.isEnabled == true)
         viewModel.onNetworkPermissionsGranted()
         Log.i("DOLE", "Network services start requested")
     }
@@ -196,16 +157,8 @@ class MainActivity : FragmentActivity(), NfcAdapter.ReaderCallback {
             if (checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE) != PackageManager.PERMISSION_GRANTED) {
                 missing.add(Manifest.permission.BLUETOOTH_ADVERTISE)
             }
-            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            if (Build.VERSION.SDK_INT <= 32 && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
                 missing.add(Manifest.permission.ACCESS_FINE_LOCATION)
-            }
-            if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                missing.add(Manifest.permission.ACCESS_COARSE_LOCATION)
-            }
-            if (Build.VERSION.SDK_INT >= 33) {
-                if (checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED) {
-                    missing.add(Manifest.permission.NEARBY_WIFI_DEVICES)
-                }
             }
         } else {
             if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {

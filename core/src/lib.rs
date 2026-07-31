@@ -4,7 +4,5 @@ uniffi::setup_scaffolding!();
 pub mod bench;
 mod constants;
 mod crypto;
-mod ledger;
 mod logging;
-mod network;
-mod sync;
+mod transaction;

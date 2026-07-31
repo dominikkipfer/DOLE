@@ -4,6 +4,21 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>DOLE uses Bluetooth to synchronize wallets with nearby devices.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>DOLE uses Bluetooth to synchronize wallets with nearby devices.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>DOLE uses the local network to synchronize wallets with nearby devices.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_http-alt._tcp.</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+		<string>bluetooth-peripheral</string>
+	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

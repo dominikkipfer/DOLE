@@ -54,7 +54,7 @@ fun DeveloperScreen(viewModel: WalletViewModel) {
     var showDeleteAccountsConfirm by remember { mutableStateOf(false) }
     var showDeleteLedgerConfirm by remember { mutableStateOf(false) }
     var showDisableConfirm by remember { mutableStateOf(false) }
-    val localSessionId = remember { CoreWrapper.localSessionId() }
+    val localSessionId = CoreWrapper.localSessionId()
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
@@ -72,28 +72,26 @@ fun DeveloperScreen(viewModel: WalletViewModel) {
 
         item(key = "network-title") { SectionTitle("Network") }
 
-        if (CoreWrapper.isBleSupported) {
-            item(key = "ble") {
-                Box(Modifier.padding(horizontal = 24.dp)) {
-                    AppSwitchButton(
-                        title = "BLE",
-                        icon = Icons.Default.Bluetooth,
-                        iconActive = viewModel.developer.status.ble,
-                        checked = viewModel.developer.isBleEnabled,
-                        onCheckedChange = { viewModel.developer.enableBle(it) }
-                    )
-                }
+        item(key = "ble") {
+            Box(Modifier.padding(horizontal = 24.dp)) {
+                AppSwitchButton(
+                    title = "BLE",
+                    icon = Icons.Default.Bluetooth,
+                    iconActive = viewModel.developer.status.ble,
+                    checked = viewModel.developer.isBleEnabled,
+                    onCheckedChange = { viewModel.developer.enableBle(it) }
+                )
             }
         }
 
-        item(key = "iroh") {
+        item(key = "local") {
             Box(Modifier.padding(horizontal = 24.dp)) {
                 AppSwitchButton(
-                    title = "mDNS",
+                    title = "Local",
                     icon = Icons.Default.Wifi,
-                    iconActive = viewModel.developer.status.iroh,
-                    checked = viewModel.developer.isIrohEnabled,
-                    onCheckedChange = { viewModel.developer.enableIroh(it) }
+                    iconActive = viewModel.developer.status.local,
+                    checked = viewModel.developer.isLocalEnabled,
+                    onCheckedChange = { viewModel.developer.enableLocal(it) }
                 )
             }
         }
@@ -150,6 +148,14 @@ fun DeveloperScreen(viewModel: WalletViewModel) {
                 }
             }
 
+            item(key = "bench-scale") {
+                Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                    SettingsMenuButton("Sync scale", color = DoleBlue) {
+                        viewModel.runBenchmark(BenchmarkKind.SCALE)
+                    }
+                }
+            }
+
             item(key = "bench-storage") {
                 Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                     SettingsMenuButton("Local storage", color = DoleBlue) {
@@ -201,9 +207,9 @@ fun DeveloperScreen(viewModel: WalletViewModel) {
             }
         }
 
-        item(key = "delete-commits") {
+        item(key = "delete-transactions") {
             Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                SettingsMenuButton("Delete all commits", color = MaterialTheme.colorScheme.error) {
+                SettingsMenuButton("Delete all transactions", color = MaterialTheme.colorScheme.error) {
                     showDeleteLedgerConfirm = true
                 }
             }
@@ -247,12 +253,12 @@ fun DeveloperScreen(viewModel: WalletViewModel) {
         AdaptiveAlertDialog(
             onConfirm = {
                 showDeleteLedgerConfirm = false
-                viewModel.developer.deleteAllTransactions()
+                viewModel.developer.deleteAllCommits()
             },
             onDismiss = { showDeleteLedgerConfirm = false },
             confirmText = "Delete",
             dismissText = "Cancel",
-            title = "Delete all commits",
+            title = "Delete all transactions",
             text = "Wipes the local ledger. Peers still have their history and may sync it back.",
             iosConfirmButtonStyle = AlertDialogIosActionStyle.Destructive,
             iosDismissButtonStyle = AlertDialogIosActionStyle.Cancel
@@ -330,11 +336,9 @@ private fun PeerRow(peer: PeerConnection) {
         titleEllipsized = true,
         trailing = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (CoreWrapper.isBleSupported) {
-                    TransportIcon(Icons.Default.Bluetooth, "BLE", peer.ble)
-                    Spacer(Modifier.width(12.dp))
-                }
-                TransportIcon(Icons.Default.Wifi, "Local network", peer.mdns)
+                TransportIcon(Icons.Default.Bluetooth, "BLE", peer.ble)
+                Spacer(Modifier.width(12.dp))
+                TransportIcon(Icons.Default.Wifi, "Local network", peer.local)
                 Spacer(Modifier.width(12.dp))
                 TransportIcon(Icons.Default.Public, "Internet", peer.internet)
             }

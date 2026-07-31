@@ -1,7 +1,9 @@
-use crate::constants::{ID_SIZE, OP_BURN, OP_GENESIS, OP_MINT, OP_SEND, ROOT_CA_BYTES, SIGNATURE_SIZE};
+use crate::constants::{
+    ID_SIZE, OP_BURN, OP_GENESIS, OP_MINT, OP_SEND, ROOT_CA_BYTES, SIGNATURE_SIZE,
+};
 use crate::logging;
 use p256::ecdsa::signature::Verifier;
-use p256::ecdsa::{RecoveryId, Signature as P256Signature, VerifyingKey};
+use p256::ecdsa::{Signature as P256Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 
 const LOG_TARGET: &str = "dole::crypto";
@@ -55,13 +57,6 @@ fn p256_signature_from_der_or_raw(bytes: &[u8]) -> Option<P256Signature> {
     }
 }
 
-pub(crate) fn signature_hex_to_raw_hex(sig_hex: &str) -> Option<String> {
-    let bytes = decode_hex(sig_hex);
-    let signature = p256_signature_from_der_or_raw(&bytes)?;
-    let raw = signature.to_bytes();
-    Some(hex::encode_upper(raw))
-}
-
 pub(crate) fn signature_hex_to_der_hex(sig_hex: &str) -> Option<String> {
     let bytes = decode_hex(sig_hex);
     let signature = p256_signature_from_der_or_raw(&bytes)?;
@@ -75,72 +70,8 @@ fn op_from_tx_type(tx_type: &str) -> Option<u8> {
         "M" => Some(OP_MINT),
         "B" => Some(OP_BURN),
         "S" => Some(OP_SEND),
-        _ => None
+        _ => None,
     }
-}
-
-pub(crate) fn genesis_signing_payload() -> [u8; 1] {
-    [OP_GENESIS]
-}
-
-pub(crate) fn recover_genesis_pubkey_hex(
-    sig_hex: &str,
-    cert_hex: &str,
-    recovery_id: u8
-) -> Option<String> {
-    let sig_bytes = decode_hex(sig_hex);
-    let cert_bytes = decode_hex(cert_hex);
-    if sig_bytes.len() != RAW_SIGNATURE_SIZE || cert_bytes.len() != RAW_SIGNATURE_SIZE {
-        return None;
-    }
-
-    let signature = P256Signature::from_slice(&sig_bytes).ok()?;
-    let payload = genesis_signing_payload();
-    let recovery_id = RecoveryId::try_from(recovery_id).ok()?;
-
-    let Ok(candidate) = VerifyingKey::recover_from_msg(&payload, &signature, recovery_id) else {
-        return None;
-    };
-    let encoded = candidate.to_sec1_point(false);
-    let pubkey = encoded.as_bytes();
-    if verify_card_certificate_internal(pubkey, &cert_bytes) {
-        return Some(hex::encode_upper(pubkey));
-    }
-
-    None
-}
-
-pub(crate) fn find_genesis_recovery_id(sig_hex: &str, cert_hex: &str) -> Option<(String, u8)> {
-    for recovery_id in 0..4u8 {
-        if let Some(pubkey) = recover_genesis_pubkey_hex(sig_hex, cert_hex, recovery_id) {
-            return Some((pubkey, recovery_id));
-        }
-    }
-
-    None
-}
-
-pub(crate) fn verify_genesis_tx(pubkey_hex: &str, sig_hex: &str, cert_hex: &str) -> bool {
-    let pubkey_bytes = decode_hex(pubkey_hex);
-    let sig_bytes = decode_hex(sig_hex);
-    let cert_bytes = decode_hex(cert_hex);
-    if pubkey_bytes.is_empty() || sig_bytes.len() != RAW_SIGNATURE_SIZE {
-        return false;
-    }
-    if !verify_card_certificate_internal(&pubkey_bytes, &cert_bytes) {
-        return false;
-    }
-
-    let verifying_key = match VerifyingKey::from_sec1_bytes(&pubkey_bytes) {
-        Ok(key) => key,
-        Err(_) => return false
-    };
-    let signature = match P256Signature::from_slice(&sig_bytes) {
-        Ok(signature) => signature,
-        Err(_) => return false
-    };
-
-    verifying_key.verify(&genesis_signing_payload(), &signature).is_ok()
 }
 
 #[uniffi::export]
@@ -169,7 +100,12 @@ fn verify_card_certificate_internal(pub_key: &[u8], cert: &[u8]) -> bool {
     root_key.verify(pub_key, &signature).is_ok()
 }
 
-fn tx_signing_payload(tx_type: &str, target_pubkey_hex: &str, goc_str: &str, seq: u64) -> Option<Vec<u8>> {
+fn tx_signing_payload(
+    tx_type: &str,
+    target_pubkey_hex: &str,
+    goc_str: &str,
+    seq: u64,
+) -> Option<Vec<u8>> {
     let op = op_from_tx_type(tx_type)?;
     let mut log_payload = Vec::new();
     log_payload.push(op);
@@ -188,56 +124,10 @@ fn tx_signing_payload(tx_type: &str, target_pubkey_hex: &str, goc_str: &str, seq
             let goc_val = goc_str.parse::<u64>().ok()?;
             log_payload.extend_from_slice(&goc_val.to_be_bytes());
         }
-        _ => return None
+        _ => return None,
     }
 
     Some(log_payload)
-}
-
-pub(crate) fn recover_tx_pubkey_hex_with_recovery_id(
-    tx_type: &str,
-    target_pubkey_hex: &str,
-    goc_str: &str,
-    seq: u64,
-    sig_hex: &str,
-    recovery_id: u8
-) -> Option<String> {
-    let payload = tx_signing_payload(tx_type, target_pubkey_hex, goc_str, seq)?;
-
-    let sig_bytes = decode_hex(sig_hex);
-    let signature = p256_signature_from_der_or_raw(&sig_bytes)?;
-    let recovery_id = RecoveryId::try_from(recovery_id).ok()?;
-
-    let candidate = VerifyingKey::recover_from_msg(&payload, &signature, recovery_id).ok()?;
-    let encoded = candidate.to_sec1_point(false);
-    Some(hex::encode_upper(encoded.as_bytes()))
-}
-
-pub(crate) fn find_tx_recovery_id_for_pubkey_hex(
-    author_pubkey_hex: &str,
-    tx_type: &str,
-    target_pubkey_hex: &str,
-    goc_str: &str,
-    seq: u64,
-    sig_hex: &str
-) -> Option<u8> {
-    for recovery_id in 0..4u8 {
-        let Some(pubkey) = recover_tx_pubkey_hex_with_recovery_id(
-            tx_type,
-            target_pubkey_hex,
-            goc_str,
-            seq,
-            sig_hex,
-            recovery_id
-        ) else {
-            continue;
-        };
-        if pubkey.eq_ignore_ascii_case(author_pubkey_hex) {
-            return Some(recovery_id);
-        }
-    }
-
-    None
 }
 
 pub fn verify_tx_signature(
@@ -246,7 +136,7 @@ pub fn verify_tx_signature(
     target_pubkey_hex: &str,
     goc_str: &str,
     seq: u64,
-    sig_hex: &str
+    sig_hex: &str,
 ) -> bool {
     let pubkey_bytes = decode_hex(author_pubkey_hex);
     if pubkey_bytes.is_empty() {
@@ -260,7 +150,7 @@ pub fn verify_tx_signature(
 
     let verifying_key = match VerifyingKey::from_sec1_bytes(&pubkey_bytes) {
         Ok(k) => k,
-        Err(_) => return false
+        Err(_) => return false,
     };
 
     let Some(log_payload) = tx_signing_payload(tx_type, target_pubkey_hex, goc_str, seq) else {

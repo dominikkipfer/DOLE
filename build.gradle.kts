@@ -17,10 +17,9 @@ tasks.register("generateConstants") {
     val javaFile = rootProject.file("card/build/generated/source/constants/java/dole/Constants.java")
     val ktFile = rootProject.file("app/shared/build/generated/source/constants/kotlin/dole/Constants.kt")
     val rustFile = rootProject.file("core/src/constants.rs")
-    val hubRustFile = rootProject.file("hub/src/constants.rs")
 
     inputs.file(confFile)
-    outputs.files(javaFile, ktFile, rustFile, hubRustFile)
+    outputs.files(javaFile, ktFile, rustFile)
 
     doLast {
         var javaCode = "package dole;\n\npublic final class Constants {\n    private Constants() {}\n"
@@ -114,6 +113,5 @@ tasks.register("generateConstants") {
         javaFile.apply { parentFile.mkdirs(); writeText(javaCode) }
         ktFile.apply { parentFile.mkdirs(); writeText(ktCode) }
         rustFile.apply { parentFile.mkdirs(); writeText(rustCode) }
-        hubRustFile.apply { parentFile.mkdirs(); writeText(rustCode) }
     }
 }

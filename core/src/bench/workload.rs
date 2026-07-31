@@ -7,18 +7,18 @@ use crate::constants::{OP_BURN, OP_GENESIS, OP_MINT, OP_SEND};
 #[cfg(feature = "bench-workload")]
 use crate::crypto::get_person_id_as_hex;
 #[cfg(feature = "bench-workload")]
-use crate::sync::encode_tx_msg;
+use crate::transaction::{
+    LedgerTransaction, prepare_genesis_transaction, prepare_ledger_transaction,
+};
 
 #[cfg(feature = "bench-workload")]
-pub const ROOT_CA_PRIVATE_KEY_HEX: &str =
-    "31C4CD6E29F3B703DAC57D84C2D4FFC63BBC116917E101F41E44DC612787280D";
+pub const ROOT_CA_PRIVATE_KEY_HEX: &str = "31C4CD6E29F3B703DAC57D84C2D4FFC63BBC116917E101F41E44DC612787280D";
 
 pub const WORKLOAD_GENESIS_COUNT: usize = 5;
 pub const WORKLOAD_MINT_COUNT: usize = 10;
 pub const WORKLOAD_BURN_COUNT: usize = 10;
 pub const WORKLOAD_SEND_COUNT: usize = 975;
-pub const WORKLOAD_TOTAL: usize =
-    WORKLOAD_GENESIS_COUNT + WORKLOAD_MINT_COUNT + WORKLOAD_BURN_COUNT + WORKLOAD_SEND_COUNT;
+pub const WORKLOAD_TOTAL: usize = WORKLOAD_GENESIS_COUNT + WORKLOAD_MINT_COUNT + WORKLOAD_BURN_COUNT + WORKLOAD_SEND_COUNT;
 
 pub const WORKLOAD_START_TIMESTAMP_SECS: u64 = 1_782_864_000;
 pub const WORKLOAD_TIMESTAMP_STEP_SECS: u64 = 86_400;
@@ -36,51 +36,23 @@ const GOC_CEILING: u64 = i64::MAX as u64;
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 pub enum BenchTxKind {
-    Genesis,
     Mint,
     Burn,
-    Send,
 }
 
 impl BenchTxKind {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Genesis => "G",
             Self::Mint => "M",
             Self::Burn => "B",
-            Self::Send => "S",
         }
     }
 
     pub fn op(self) -> u8 {
         match self {
-            Self::Genesis => OP_GENESIS,
             Self::Mint => OP_MINT,
             Self::Burn => OP_BURN,
-            Self::Send => OP_SEND,
         }
-    }
-}
-
-#[cfg(feature = "bench-workload")]
-#[derive(Clone, Debug)]
-pub struct BenchTx {
-    pub kind: BenchTxKind,
-    pub author_id: String,
-    pub author_pubkey: String,
-    pub target: String,
-    pub payload: String,
-    pub seq: u64,
-    pub ts: u64,
-    pub sig: String,
-    pub recovery_id: u8,
-    pub wire: Vec<u8>,
-}
-
-#[cfg(feature = "bench-workload")]
-impl BenchTx {
-    pub fn wire_len(&self) -> usize {
-        self.wire.len()
     }
 }
 
@@ -153,7 +125,7 @@ impl WorkloadBuilder {
         }
     }
 
-    pub fn build(mut self) -> Vec<BenchTx> {
+    pub fn build(mut self) -> Vec<LedgerTransaction> {
         let mut txs = Vec::with_capacity(WORKLOAD_TOTAL);
 
         for _ in 0..WORKLOAD_GENESIS_COUNT {
@@ -178,37 +150,22 @@ impl WorkloadBuilder {
         txs
     }
 
-    fn emit_genesis(&mut self, index: usize) -> BenchTx {
+    fn emit_genesis(&mut self, index: usize) -> LedgerTransaction {
         let ts = self.next_timestamp();
         let account = &mut self.accounts[index];
         let sig: P256Signature = account.signing_key.sign(&[OP_GENESIS]);
         let sig_hex = hex::encode_upper(sig.to_bytes());
-        let recovery_id = crate::crypto::find_genesis_recovery_id(&sig_hex, &account.cert_hex)
-            .map(|(_, id)| id)
-            .expect("generated genesis signature is recoverable");
-
-        let author_id = account.id_hex.clone();
-        let author_pubkey = account.pubkey_hex.clone();
-        let cert_hex = account.cert_hex.clone();
-
-        let wire = encode_tx_msg("G", &cert_hex, &author_pubkey, 0, ts, &sig_hex, recovery_id)
-            .expect("genesis transaction encodes");
-
-        BenchTx {
-            kind: BenchTxKind::Genesis,
-            author_id,
-            author_pubkey,
-            target: cert_hex,
-            payload: String::new(),
-            seq: 0,
-            ts,
-            sig: sig_hex,
-            recovery_id,
-            wire,
-        }
+        prepare_genesis_transaction(
+            account.id_hex.clone(),
+            account.pubkey_hex.clone(),
+            sig_hex,
+            account.cert_hex.clone(),
+            Some(i64::try_from(ts).expect("timestamp fits i64")),
+        )
+        .expect("genesis transaction validates")
     }
 
-    fn emit_amount(&mut self, index: usize, kind: BenchTxKind) -> BenchTx {
+    fn emit_amount(&mut self, index: usize, kind: BenchTxKind) -> LedgerTransaction {
         let ts = self.next_timestamp();
         let account = &mut self.accounts[index];
         account.seq += 1;
@@ -222,38 +179,19 @@ impl WorkloadBuilder {
 
         let sig: P256Signature = account.signing_key.sign(&payload);
         let sig_hex = hex::encode_upper(sig.to_bytes());
-        let author_pubkey = account.pubkey_hex.clone();
-        let author_id = account.id_hex.clone();
-        let goc_str = goc.to_string();
-
-        let recovery_id = crate::crypto::find_tx_recovery_id_for_pubkey_hex(
-            &author_pubkey,
-            kind.label(),
-            "",
-            &goc_str,
-            seq,
-            &sig_hex,
+        prepare_ledger_transaction(
+            account.pubkey_hex.clone(),
+            kind.label().into(),
+            String::new(),
+            i64::try_from(goc).expect("goc fits i64"),
+            i64::try_from(seq).expect("sequence fits i64"),
+            sig_hex,
+            Some(i64::try_from(ts).expect("timestamp fits i64")),
         )
-        .expect("generated signature is recoverable");
-
-        let wire = encode_tx_msg(kind.label(), "", &goc_str, seq, ts, &sig_hex, recovery_id)
-            .expect("amount transaction encodes");
-
-        BenchTx {
-            kind,
-            author_id,
-            author_pubkey,
-            target: String::new(),
-            payload: goc_str,
-            seq,
-            ts,
-            sig: sig_hex,
-            recovery_id,
-            wire,
-        }
+        .expect("amount transaction validates")
     }
 
-    fn emit_send(&mut self, author: usize, target: usize) -> BenchTx {
+    fn emit_send(&mut self, author: usize, target: usize) -> LedgerTransaction {
         let ts = self.next_timestamp();
         let target_id = self.accounts[target].id_hex.clone();
 
@@ -270,35 +208,16 @@ impl WorkloadBuilder {
 
         let sig: P256Signature = account.signing_key.sign(&payload);
         let sig_hex = hex::encode_upper(sig.to_bytes());
-        let author_pubkey = account.pubkey_hex.clone();
-        let author_id = account.id_hex.clone();
-        let goc_str = goc.to_string();
-
-        let recovery_id = crate::crypto::find_tx_recovery_id_for_pubkey_hex(
-            &author_pubkey,
-            "S",
-            &target_id,
-            &goc_str,
-            seq,
-            &sig_hex,
+        prepare_ledger_transaction(
+            account.pubkey_hex.clone(),
+            "S".into(),
+            target_id,
+            i64::try_from(goc).expect("goc fits i64"),
+            i64::try_from(seq).expect("sequence fits i64"),
+            sig_hex,
+            Some(i64::try_from(ts).expect("timestamp fits i64")),
         )
-        .expect("generated signature is recoverable");
-
-        let wire = encode_tx_msg("S", &target_id, &goc_str, seq, ts, &sig_hex, recovery_id)
-            .expect("send transaction encodes");
-
-        BenchTx {
-            kind: BenchTxKind::Send,
-            author_id,
-            author_pubkey,
-            target: target_id,
-            payload: goc_str,
-            seq,
-            ts,
-            sig: sig_hex,
-            recovery_id,
-            wire,
-        }
+        .expect("send transaction validates")
     }
 }
 
@@ -310,7 +229,7 @@ impl Default for WorkloadBuilder {
 }
 
 #[cfg(feature = "bench-workload")]
-pub fn generate_workload() -> Vec<BenchTx> {
+pub fn generate_workload() -> Vec<LedgerTransaction> {
     WorkloadBuilder::new().build()
 }
 
@@ -331,98 +250,5 @@ fn random_signing_key() -> SigningKey {
         if let Ok(key) = SigningKey::from_slice(&seed) {
             return key;
         }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Summary {
-    pub count: usize,
-    pub min: u64,
-    pub max: u64,
-    pub median: u64,
-    pub total: u64,
-}
-
-impl Summary {
-    pub fn mean(&self) -> f64 {
-        if self.count == 0 {
-            return 0.0;
-        }
-        self.total as f64 / self.count as f64
-    }
-}
-
-pub fn size_stats(sizes: &[usize]) -> Option<Summary> {
-    if sizes.is_empty() {
-        return None;
-    }
-
-    let mut sorted = sizes.iter().map(|size| *size as u64).collect::<Vec<_>>();
-    sorted.sort_unstable();
-
-    let mid = sorted.len() / 2;
-    let median = if sorted.len().is_multiple_of(2) {
-        (sorted[mid - 1] + sorted[mid]) / 2
-    } else {
-        sorted[mid]
-    };
-
-    Some(Summary {
-        count: sorted.len(),
-        min: sorted[0],
-        max: sorted[sorted.len() - 1],
-        median,
-        total: sorted.iter().sum(),
-    })
-}
-
-pub fn directory_size_bytes(path: &std::path::Path) -> u64 {
-    let Ok(entries) = std::fs::read_dir(path) else {
-        return 0;
-    };
-
-    let mut total = 0;
-    for entry in entries.flatten() {
-        let Ok(metadata) = entry.metadata() else {
-            continue;
-        };
-        if metadata.is_dir() {
-            total += directory_size_bytes(&entry.path());
-        } else {
-            total += metadata.len();
-        }
-    }
-    total
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct StoreSample {
-    pub applied: usize,
-    pub bytes: u64,
-    pub delta_bytes: u64,
-}
-
-#[cfg_attr(not(feature = "bench-workload"), allow(dead_code))]
-#[derive(Default)]
-pub struct StoreGrowth {
-    samples: Vec<StoreSample>,
-}
-
-#[cfg_attr(not(feature = "bench-workload"), allow(dead_code))]
-impl StoreGrowth {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn sample(&mut self, applied: usize, path: &std::path::Path) -> StoreSample {
-        let bytes = directory_size_bytes(path);
-        let previous = self.samples.last().map(|sample| sample.bytes).unwrap_or(0);
-        let sample = StoreSample {
-            applied,
-            bytes,
-            delta_bytes: bytes.saturating_sub(previous),
-        };
-        self.samples.push(sample);
-        sample
     }
 }

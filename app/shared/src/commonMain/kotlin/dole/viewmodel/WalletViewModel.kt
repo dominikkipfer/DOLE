@@ -426,7 +426,7 @@ class WalletViewModel(
         return true
     }
 
-    private fun runAction(ws: WalletService, action: PendingAction): String? = try {
+    private suspend fun runAction(ws: WalletService, action: PendingAction): String? = try {
         when (action.type) {
             "SEND" -> ws.send(action.targetId!!, action.amount, _fullHistory.map { it.tx })
             "MINT" -> ws.mint(action.amount)
@@ -651,24 +651,31 @@ class WalletViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             val message = when (kind) {
                 BenchmarkKind.WORKLOAD -> {
-                    val count = CoreWrapper.benchGenerateWorkload(storagePath)
-                    "Workload ready: $count transactions."
+                    val count = CoreWrapper.benchGenerateWorkload()
+                    "Workload generated: $count commits."
+                }
+                BenchmarkKind.SCALE -> {
+                    if (CoreWrapper.benchRunScale(storagePath)) {
+                        "Sync scale complete."
+                    } else {
+                        "Sync scale needs another benchmark peer."
+                    }
                 }
                 BenchmarkKind.STORE -> {
                     val count = CoreWrapper.benchRunStore(storagePath)
-                    "Local storage measured over $count transactions."
+                    CoreWrapper.benchStorageReport() ?: "Local storage measured over $count transactions."
                 }
                 BenchmarkKind.LATENCY -> {
-                    if (CoreWrapper.benchRunLatency(storagePath)) {
+                    if (!CoreWrapper.benchHasWorkload()) {
+                        "Latency needs a workload."
+                    } else if (CoreWrapper.benchRunLatency(storagePath)) {
                         "Latency commit sent."
                     } else {
-                        "Latency needs a workload."
+                        "Latency is already running or needs another benchmark peer."
                     }
                 }
             }
-            withContext(Dispatchers.Main) {
-                showUserMessage(message)
-            }
+            withContext(Dispatchers.Main) { showUserMessage(message) }
         }
     }
 
