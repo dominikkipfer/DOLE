@@ -112,6 +112,8 @@ pub(super) fn notify_ui_internal(repo: &gix::Repository, my_key: &str, listener:
                 r#","certificate":"{}","publicKey":"{}" "#,
                 display_target, payload_s
             )
+        } else if t == "S" {
+            format!(r#","counter":{}"#, cum_val)
         } else {
             String::new()
         };

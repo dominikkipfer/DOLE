@@ -48,7 +48,8 @@ data class SendTransaction(
     override val seq: Long,
     override val signature: String = "",
     val target: String,
-    val goc: Long
+    val goc: Long,
+    val counter: Long = goc
 ) : Transaction
 
 @Serializable

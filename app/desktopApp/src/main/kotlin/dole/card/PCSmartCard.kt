@@ -224,6 +224,13 @@ class PCSmartCard : SmartCard {
     } catch (_: Exception) {
         null
     }
+
+    override fun peerState(publicKey: ByteArray): CardPeerState? = try {
+        val ins = Constants.OP_GET_PEER_STATE.toInt()
+        readPeerState(transmitInternal(CommandAPDU(Constants.CLA_PROPRIETARY, ins, 0x00, 0x00, publicKey, 256)))
+    } catch (_: Exception) {
+        null
+    }
 }
 
 class CommandAPDU(cla: Int, ins: Int, p1: Int, p2: Int, data: ByteArray? = null, ne: Int = 0) {

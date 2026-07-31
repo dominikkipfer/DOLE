@@ -16,7 +16,7 @@ fun unsyncedIncoming(
     lastReceived: Map<String, Long>
 ): List<SendTransaction> = rustHistory
     .filterIsInstance<SendTransaction>()
-    .filter { it.target == myId && it.goc > (lastReceived[it.author] ?: 0L) }
+    .filter { it.target == myId && it.counter > (lastReceived[it.author] ?: 0L) }
 
 class WalletService(private val card: SmartCard, private val pin: String, private val cardSyncState: CardSyncState) {
     val currentUserId: String
@@ -40,7 +40,7 @@ class WalletService(private val card: SmartCard, private val pin: String, privat
 
     private fun openSession() {
         if (!card.isConnected) card.connect()
-        card.verifyPin(pinBytes())
+        if (!card.verifyPin(pinBytes())) throw IllegalStateException("Invalid PIN for SmartCard")
     }
 
     fun cardState(): CardSecureState? = try {
@@ -56,33 +56,46 @@ class WalletService(private val card: SmartCard, private val pin: String, privat
         val lastReceived = cardSyncState.getLastReceived(currentUserId).toMutableMap()
         var updated = false
 
-        val pendingByAuthor = unsyncedIncoming(rustHistory, currentUserId, lastReceived).groupBy { it.author }
+        val incomingByAuthor = rustHistory
+            .filterIsInstance<SendTransaction>()
+            .filter { it.target == currentUserId }
+            .groupBy { it.author }
 
-        for ((author, authorTxs) in pendingByAuthor) {
+        for ((author, authorTxs) in incomingByAuthor) {
             val senderGenesis = rustHistory.filterIsInstance<GenesisTransaction>().find { it.author == author }
+            val senderPubKey = CoreWrapper.hexToBytes(senderGenesis?.publicKey ?: "")
+            val peerCertificate = senderGenesis?.certificateHex?.let { CoreWrapper.hexToBytes(it) }
 
-            for ((_, _, _, seq, signature, _, goc) in authorTxs.sortedByDescending { it.goc }) {
-                if (goc <= (lastReceived[author] ?: 0L)) continue
+            if (senderPubKey.isEmpty() || peerCertificate == null) continue
+
+            ensurePeerRegistered(senderPubKey, peerCertificate)
+            card.peerState(senderPubKey)?.received?.let { received ->
+                if (received != (lastReceived[author] ?: 0L)) {
+                    lastReceived[author] = received
+                    updated = true
+                }
+            }
+
+            for (transaction in authorTxs.sortedByDescending { it.counter }) {
+                if (transaction.counter <= (lastReceived[author] ?: 0L)) continue
 
                 try {
-                    val senderPubKey = CoreWrapper.hexToBytes(senderGenesis?.publicKey ?: "")
-
-                    val peerCertificate = senderGenesis?.certificateHex?.let { CoreWrapper.hexToBytes(it) }
-                        ?: throw IllegalStateException("No certificate found for sender: $author")
-
-                    ensurePeerRegistered(senderPubKey, peerCertificate)
-
-                    val signatureBytes = CoreWrapper.hexToBytes(signature)
+                    val signatureBytes = CoreWrapper.hexToBytes(transaction.signature)
 
                     val myIdBytes = CoreWrapper.hexToBytes(currentUserId)
 
-                    val logPayload = ProtocolSerializer.buildLogPayload(seq, Constants.OP_SEND, myIdBytes, goc)
+                    val logPayload = ProtocolSerializer.buildLogPayload(
+                        transaction.seq,
+                        Constants.OP_SEND,
+                        myIdBytes,
+                        transaction.counter
+                    )
 
                     val payload = ProtocolSerializer.buildReceivePayload(senderPubKey, signatureBytes, logPayload)
 
                     card.processReceive(payload)
 
-                    lastReceived[author] = goc
+                    lastReceived[author] = transaction.counter
                     updated = true
                 } catch (_: Exception) { }
             }

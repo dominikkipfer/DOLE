@@ -22,6 +22,7 @@ nonisolated final class IosSmartCard: NSObject, SmartCard, NFCTagReaderSessionDe
         static let getCert: UInt8 = 0x30
         static let getStatus: UInt8 = 0x60
         static let getSecureStatus: UInt8 = 0x61
+        static let getPeerState: UInt8 = 0x62
     }
 
     private enum Status {
@@ -30,11 +31,14 @@ nonisolated final class IosSmartCard: NSObject, SmartCard, NFCTagReaderSessionDe
         static let secureBalanceOffset = 0
         static let secureSeqOffset = 8
         static let secureSize = 16
+        static let peerReceivedOffset = 0
+        static let peerSentOffset = 8
+        static let peerSize = 16
     }
 
     private static let sessionExtendingOps: Set<UInt8> = [
         Op.genesis, Op.mint, Op.burn, Op.send, Op.receive, Op.addPeer,
-        Op.verifyPin, Op.changePin
+        Op.verifyPin, Op.changePin, Op.getPeerState
     ]
     private static let idleCloseDelay: TimeInterval = 5
 
@@ -335,6 +339,19 @@ nonisolated final class IosSmartCard: NSObject, SmartCard, NFCTagReaderSessionDe
             return value
         }
         return CardSecureState(balance: longAt(Status.secureBalanceOffset), seq: longAt(Status.secureSeqOffset))
+    }
+
+    func peerState(publicKey: KotlinByteArray) -> CardPeerState? {
+        guard let response = try? transmit(ins: Op.getPeerState, data: data(from: publicKey)) else { return nil }
+        let bytes = [UInt8](response)
+        guard bytes.count >= Status.peerSize else { return nil }
+
+        func longAt(_ offset: Int) -> Int64 {
+            var value: Int64 = 0
+            for i in 0..<8 { value = (value << 8) | Int64(bytes[offset + i]) }
+            return value
+        }
+        return CardPeerState(received: longAt(Status.peerReceivedOffset), sent: longAt(Status.peerSentOffset))
     }
 
     var publicKey: KotlinByteArray? {

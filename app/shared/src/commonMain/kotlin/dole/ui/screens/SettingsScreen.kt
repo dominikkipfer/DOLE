@@ -261,7 +261,7 @@ fun SettingsScreen(viewModel: WalletViewModel, onBack: () -> Unit) {
                                 WalletCard(
                                     account = previewAccount,
                                     modifier = Modifier.fillMaxWidth(),
-                                    isOnline = viewModel.isCardConnected,
+                                    isOnline = viewModel.isCurrentCardConnected,
                                     showFullId = false,
                                     overlayContent = if (showOverlay) {
                                         {

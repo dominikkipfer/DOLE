@@ -161,6 +161,7 @@ public class Card extends Applet implements ExtendedLength {
             switch (ins) {
                 case Constants.OP_GET_STATUS:        processGetStatus(apdu);       break;
                 case Constants.OP_GET_SECURE_STATUS: processGetSecureStatus(apdu); break;
+                case Constants.OP_GET_PEER_STATE:    processGetPeerState(apdu);    break;
                 case Constants.OP_VERIFY_PIN:        verifyPin(apdu);              break;
                 case Constants.OP_CHANGE_PIN:        processChangePin(apdu);       break;
                 case Constants.OP_GENESIS:           processGenesis(apdu);         break;
@@ -236,6 +237,24 @@ public class Card extends Applet implements ExtendedLength {
         Util.arrayCopyNonAtomic(balance, (short)0, buffer, Constants.CARD_SECURE_OFFSET_BALANCE, Constants.LONG_SIZE);
         Util.arrayCopyNonAtomic(seqNumber, (short)0, buffer, Constants.CARD_SECURE_OFFSET_SEQ, Constants.LONG_SIZE);
         apdu.setOutgoingAndSend((short)0, Constants.CARD_SECURE_STATUS_SIZE);
+    }
+
+    private void processGetPeerState(APDU apdu) {
+        checkPin();
+        checkGenesisDone();
+
+        byte[] buffer = apdu.getBuffer();
+        short len = apdu.setIncomingAndReceive();
+        if (len != Constants.PUBKEY_SIZE) ISOException.throwIt(Constants.SW_WRONG_DATA);
+
+        short peerIdx = findPeer(buffer, ISO7816.OFFSET_CDATA);
+        if (peerIdx == -1) ISOException.throwIt(Constants.SW_CONDITIONS_NOT_SATISFIED);
+
+        short receivedOff = getPeerOffset(peerIdx, Constants.CARD_PEER_OFFSET_RECV);
+        short sentOff = getPeerOffset(peerIdx, Constants.CARD_PEER_OFFSET_SENT);
+        Util.arrayCopyNonAtomic(peerData, receivedOff, buffer, Constants.CARD_PEER_STATE_OFFSET_RECEIVED, Constants.LONG_SIZE);
+        Util.arrayCopyNonAtomic(peerData, sentOff, buffer, Constants.CARD_PEER_STATE_OFFSET_SENT, Constants.LONG_SIZE);
+        apdu.setOutgoingAndSend((short)0, Constants.CARD_PEER_STATE_SIZE);
     }
 
     /**

@@ -1,8 +1,10 @@
 name: Build DOLE Apps
+
 on:
   push:
     branches:
-      - git-ledger
+      - '**'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,159 +17,388 @@ jobs:
   build-card:
     name: Build SmartCard (.cap)
     runs-on: ubuntu-latest
+
     steps:
       - name: Check out code
         uses: actions/checkout@v7
+
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:
-          distribution: 'zulu'
+          distribution: zulu
           java-version: 21
-          cache: 'gradle'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.ref_name != 'main' }}
+
       - name: Make gradlew executable
         run: chmod +x ./gradlew
-        shell: bash
-      - name: Build CAP Applet
-        run: ./gradlew :card:buildApplet
-      - name: Upload CAP Artifact
+
+      - name: Build CAP applet
+        run: ./gradlew :card:buildApplet --no-daemon
+
+      - name: Upload CAP artifact
         uses: actions/upload-artifact@v7
         with:
           name: SmartCard-Applet
           path: card/build/card.cap
+          if-no-files-found: error
           retention-days: 14
 
   build-android:
     name: Build Android (APK/AAB)
     runs-on: ubuntu-latest
+
     steps:
       - name: Check out code
         uses: actions/checkout@v7
+
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:
-          distribution: 'zulu'
+          distribution: zulu
           java-version: 21
-          cache: 'gradle'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.ref_name != 'main' }}
+
       - name: Install Rust for Android
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
-      - name: Cache Rust & Cargo
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Cache Rust and Cargo
         uses: Swatinem/rust-cache@v2
+
       - name: Install cargo-ndk
-        run: cargo install cargo-ndk
+        run: cargo install cargo-ndk --locked
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
+
+      - name: Build release APK and AAB
+        run: |
+          ./gradlew \
+            :app:androidApp:assembleRelease \
+            :app:androidApp:bundleRelease \
+            --no-daemon
+
+      - name: Verify Android packages
         shell: bash
-      - name: Build Release APK
-        run: ./gradlew :app:androidApp:assembleRelease
-      - name: Upload Android Artifact
+        run: |
+          set -euo pipefail
+          compgen -G "app/androidApp/build/outputs/apk/release/*.apk" > /dev/null
+          compgen -G "app/androidApp/build/outputs/bundle/release/*.aab" > /dev/null
+
+      - name: Upload Android artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Android-APK
-          path: app/androidApp/build/outputs/apk/release/*.apk
+          name: Android
+          path: |
+            app/androidApp/build/outputs/apk/release/*.apk
+            app/androidApp/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
           retention-days: 14
 
   build-desktop:
     name: Build Desktop (${{ matrix.os_name }})
     runs-on: ${{ matrix.os }}
+
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            os_name: Linux (x64)
+            os_name: Linux-x64
           - os: windows-latest
-            os_name: Windows (x64)
+            os_name: Windows-x64
           - os: macos-latest
-            os_name: macOS (ARM64)
+            os_name: macOS-arm64
+
     steps:
       - name: Check out code
         uses: actions/checkout@v7
+
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:
-          distribution: 'zulu'
+          distribution: zulu
           java-version: 21
-          cache: 'gradle'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.ref_name != 'main' }}
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-      - name: Cache Rust & Cargo
+
+      - name: Cache Rust and Cargo
         uses: Swatinem/rust-cache@v2
+
       - name: Make gradlew executable
         run: chmod +x ./gradlew
         shell: bash
-      - name: Build Desktop Distribution
-        run: ./gradlew :app:desktopApp:packageReleaseDistributionForCurrentOS
-      - name: Upload Desktop Artifact
+
+      - name: Build desktop distribution
+        run: ./gradlew :app:desktopApp:packageReleaseDistributionForCurrentOS --no-daemon
+
+      - name: Verify desktop installer
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          installers=()
+
+          while IFS= read -r -d '' installer; do
+            installers+=("${installer}")
+          done < <(
+            find app/desktopApp/build/compose/binaries \
+              -type f \
+              \( \
+                -iname '*.dmg' -o \
+                -iname '*.pkg' -o \
+                -iname '*.deb' -o \
+                -iname '*.rpm' -o \
+                -iname '*.msi' -o \
+                -iname '*.exe' \
+              \) \
+              -print0
+          )
+
+          if (( ${#installers[@]} == 0 )); then
+            echo "No desktop installer was produced." >&2
+            echo "Check nativeDistributions.targetFormats in app/desktopApp/build.gradle.kts." >&2
+            find app/desktopApp/build/compose/binaries -maxdepth 5 -print || true
+            exit 1
+          fi
+
+          printf 'Desktop installers:\n'
+          printf '%s\n' "${installers[@]}"
+
+      - name: Upload desktop installer
         uses: actions/upload-artifact@v7
         with:
           name: Desktop-${{ matrix.os_name }}
           path: |
-            app/desktopApp/build/compose/binaries/main/app/*
-            app/desktopApp/build/compose/binaries/main/dmg/*
-            app/desktopApp/build/compose/binaries/main/deb/*
-            app/desktopApp/build/compose/binaries/main/msi/*
-            app/desktopApp/build/compose/binaries/main/exe/*
+            app/desktopApp/build/compose/binaries/**/*.dmg
+            app/desktopApp/build/compose/binaries/**/*.pkg
+            app/desktopApp/build/compose/binaries/**/*.deb
+            app/desktopApp/build/compose/binaries/**/*.rpm
+            app/desktopApp/build/compose/binaries/**/*.msi
+            app/desktopApp/build/compose/binaries/**/*.exe
+          if-no-files-found: error
           retention-days: 14
 
   build-ios:
-    name: Build iOS (Framework & Rust Bindings)
+    name: Build iOS (XCFramework and Swift bindings)
     runs-on: macos-latest
+
     steps:
       - name: Check out code
         uses: actions/checkout@v7
+
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:
-          distribution: 'zulu'
+          distribution: zulu
           java-version: 21
-          cache: 'gradle'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.ref_name != 'main' }}
+
       - name: Install Rust for iOS
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
-      - name: Cache Rust & Cargo
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+
+      - name: Cache Rust and Cargo
         uses: Swatinem/rust-cache@v2
+
       - name: Make gradlew executable
         run: chmod +x ./gradlew
-        shell: bash
-      - name: Build iOS XCFramework
-        run: ./gradlew :app:shared:assembleXCFramework
 
-      - name: Upload iOS Artifacts
+      - name: Build iOS XCFramework
+        run: ./gradlew :app:shared:assembleXCFramework --no-daemon
+
+      - name: Package iOS artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -d app/shared/build/XCFrameworks
+          test -d app/shared/build/generated/uniffi/swift
+
+          mkdir -p release/ios
+          cp -R app/shared/build/XCFrameworks release/ios/
+          cp -R app/shared/build/generated/uniffi/swift release/ios/uniffi-swift
+
+          for target in \
+            aarch64-apple-ios \
+            aarch64-apple-ios-sim \
+            x86_64-apple-ios
+          do
+            library="core/target/${target}/release/libcore.a"
+            if [[ -f "${library}" ]]; then
+              cp "${library}" "release/ios/libcore-${target}.a"
+            fi
+          done
+
+          ditto \
+            -c \
+            -k \
+            --sequesterRsrc \
+            --keepParent \
+            release/ios \
+            release/DOLE-iOS-Artifacts.zip
+
+      - name: Upload iOS artifact
         uses: actions/upload-artifact@v7
         with:
-          name: iOS-Artifacts
-          path: |
-            app/shared/build/XCFrameworks/
-            app/shared/build/generated/uniffi/swift/
-            core/target/aarch64-apple-ios/release/libcore.a
-            core/target/aarch64-apple-ios-sim/release/libcore.a
+          name: iOS
+          path: release/DOLE-iOS-Artifacts.zip
+          if-no-files-found: error
           retention-days: 14
 
-  create-draft-release:
-    name: Create/Update Internal Draft Release
-    needs: [ build-card, build-android, build-desktop, build-ios ]
+  create-release:
+    name: Create DOLE release
+    needs:
+      - build-card
+      - build-android
+      - build-desktop
+      - build-ios
     runs-on: ubuntu-latest
+
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v8
-      - name: Delete old release & tag
-        run: gh release delete git-ledger-latest --cleanup-tag -y || true
+        with:
+          path: downloaded-artifacts
+
+      - name: Collect release files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Downloaded files:"
+          find downloaded-artifacts -type f -print
+
+          mkdir -p release-files
+
+          while IFS= read -r -d '' file; do
+            destination="release-files/$(basename "${file}")"
+
+            if [[ -e "${destination}" ]]; then
+              echo "Duplicate release filename: ${destination}" >&2
+              exit 1
+            fi
+
+            cp "${file}" "${destination}"
+          done < <(
+            find downloaded-artifacts -type f \
+              \( \
+                -iname '*.apk' -o \
+                -iname '*.aab' -o \
+                -iname '*.cap' -o \
+                -iname '*.dmg' -o \
+                -iname '*.pkg' -o \
+                -iname '*.deb' -o \
+                -iname '*.rpm' -o \
+                -iname '*.msi' -o \
+                -iname '*.exe' -o \
+                -iname '*.zip' \
+              \) \
+              -print0
+          )
+
+          file_count="$(find release-files -maxdepth 1 -type f | wc -l)"
+          echo "Collected ${file_count} release files."
+
+          if [[ "${file_count}" -lt 7 ]]; then
+            echo "Expected at least 7 files: APK, AAB, CAP, three desktop installers and iOS ZIP." >&2
+            exit 1
+          fi
+
+          (
+            cd release-files
+            sha256sum * > SHA256SUMS.txt
+          )
+
+          echo "Release files:"
+          find release-files -maxdepth 1 -type f -printf '%f\n' | sort
+
+      - name: Prepare release metadata
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          short_sha="${GITHUB_SHA::7}"
+
+          if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+            release_tag="release-${GITHUB_RUN_NUMBER}-${short_sha}"
+            release_name="DOLE Release #${GITHUB_RUN_NUMBER} - ${short_sha}"
+            release_type="Stable release"
+            prerelease="false"
+            make_latest="true"
+          else
+            release_tag="${GITHUB_REF_NAME}-latest"
+            release_name="DOLE Development Snapshot [${GITHUB_REF_NAME}] - ${short_sha}"
+            release_type="Development pre-release"
+            prerelease="true"
+            make_latest="false"
+          fi
+
+          {
+            echo "tag=${release_tag}"
+            echo "name=${release_name}"
+            echo "type=${release_type}"
+            echo "prerelease=${prerelease}"
+            echo "make_latest=${make_latest}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Delete previous branch pre-release
+        if: github.ref_name != 'main'
+        shell: bash
+        run: gh release delete "${RELEASE_TAG}" --cleanup-tag --yes || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Create Draft Release
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
-          draft: true
-          prerelease: true
-          name: "DOLE Development Snapshot - ${{ github.sha }}"
-          tag_name: "git-ledger-latest"
+          tag_name: ${{ steps.release.outputs.tag }}
           target_commitish: ${{ github.sha }}
-          files: |
-            Android-APK/*
-            Desktop-*/*
-            SmartCard-Applet/*
-            iOS-Artifacts/*
+          name: ${{ steps.release.outputs.name }}
+          body: |
+            ## Release overview
+
+            This release provides the latest DOLE application packages and supporting artifacts for the available platforms.
+
+            ### Build information
+
+            | Property | Value |
+            |---|---|
+            | Release type | **${{ steps.release.outputs.type }}** |
+            | Source branch | `${{ github.ref_name }}` |
+            | Commit | [`${{ github.sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) |
+            | Workflow run | [#${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
+
+            ### Packages
+
+            The downloadable assets for Android, desktop, iOS, and the Java Card applet are listed below.
+
+            > Development snapshots are intended for testing and evaluation. Stable releases are published from the `main` branch.
+          draft: false
+          prerelease: ${{ steps.release.outputs.prerelease }}
+          make_latest: ${{ steps.release.outputs.make_latest }}
+          generate_release_notes: false
+          fail_on_unmatched_files: true
+          files: release-files/*

@@ -3,6 +3,7 @@ package dole.card
 import dole.Constants
 
 data class CardSecureState(val balance: Long, val seq: Long)
+data class CardPeerState(val received: Long, val sent: Long)
 
 private fun ByteArray.beLongAt(offset: Int): Long {
     var value = 0L
@@ -15,6 +16,14 @@ fun readSecureState(payload: ByteArray): CardSecureState? {
     return CardSecureState(
         balance = payload.beLongAt(Constants.CARD_SECURE_OFFSET_BALANCE.toInt()),
         seq = payload.beLongAt(Constants.CARD_SECURE_OFFSET_SEQ.toInt())
+    )
+}
+
+fun readPeerState(payload: ByteArray): CardPeerState? {
+    if (payload.size < Constants.CARD_PEER_STATE_SIZE.toInt()) return null
+    return CardPeerState(
+        received = payload.beLongAt(Constants.CARD_PEER_STATE_OFFSET_RECEIVED.toInt()),
+        sent = payload.beLongAt(Constants.CARD_PEER_STATE_OFFSET_SENT.toInt())
     )
 }
 
@@ -51,6 +60,7 @@ interface SmartCard {
     val certificate: ByteArray?
 
     fun secureState(): CardSecureState?
+    fun peerState(publicKey: ByteArray): CardPeerState?
     fun verifyPin(pin: ByteArray): Boolean
     fun changePin(newPin: ByteArray): Boolean
     @Throws(Exception::class)

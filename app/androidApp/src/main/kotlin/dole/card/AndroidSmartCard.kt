@@ -128,4 +128,10 @@ class AndroidSmartCard(var tag: Tag? = null) : SmartCard {
     } catch (_: Exception) {
         null
     }
+
+    override fun peerState(publicKey: ByteArray): CardPeerState? = try {
+        readPeerState(transmit(Constants.OP_GET_PEER_STATE.toInt(), publicKey))
+    } catch (_: Exception) {
+        null
+    }
 }

@@ -290,7 +290,7 @@ fun DashboardScreen(
 						) {
 							SharedWalletCard(
 								currentAccount,
-								viewModel.isCardConnected,
+								viewModel.isCurrentCardConnected,
 								sharedTransitionScope,
 								animatedVisibilityScope,
 								true,
@@ -377,7 +377,7 @@ fun DashboardScreen(
 						) {
 							SharedWalletCard(
 								account = currentAccount,
-								isOnline = viewModel.isCardConnected,
+								isOnline = viewModel.isCurrentCardConnected,
 								sharedTransitionScope = sharedTransitionScope,
 								animatedVisibilityScope = animatedVisibilityScope,
 								showFullId = showFullId,
@@ -586,12 +586,15 @@ fun TransactionDashboardList(
 
 	val contentPad = if (topPadding != null) PaddingValues(bottom = bottomPad) else PaddingValues(top = 0.dp, bottom = 32.dp)
 
-	val sessionList = viewModel.sessionTransactions.distinctBy { it.tx.id }
-	val searchList = remember(viewModel.filteredHistory) {
-		viewModel.filteredHistory.distinctBy { it.tx.id }
-	}
 	val safeUnsyncedTxs = remember(unsyncedTxs) {
 		unsyncedTxs.distinctBy { it.tx.id }
+	}
+	val unsyncedIds = remember(safeUnsyncedTxs) { safeUnsyncedTxs.mapTo(HashSet()) { it.tx.id } }
+	val sessionList = viewModel.sessionTransactions
+		.filterNot { it.tx.id in unsyncedIds }
+		.distinctBy { it.tx.id }
+	val searchList = remember(viewModel.filteredHistory) {
+		viewModel.filteredHistory.distinctBy { it.tx.id }
 	}
 
 	val myId = viewModel.currentId ?: ""
