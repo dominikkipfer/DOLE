@@ -8,6 +8,16 @@ DOLE is a proof-of-concept peer-to-peer payment system based on the GOC-Ledger m
 
 The wallet runs on Android, iOS, Windows, and macOS. It uses Iroh for local and global peer-to-peer synchronisation and Bluetooth Low Energy as an offline fallback on Android and Windows. No central service owns the ledger or decides which transactions are valid.
 
+<p align="center">
+  <img src="docs/pictures/devices.png" alt="DOLE synchronising directly between Android, iOS, Windows, and macOS" width="100%">
+</p>
+
+<p align="center">
+  <a href="https://testflight.apple.com/join/2J7gNTJ4">
+    <img src="docs/pictures/testflight_badge.svg" alt="Join beta version on TestFlight">
+  </a>
+</p>
+
 This version was developed as a bachelor thesis at the University of Basel. It replaces the closed-source Ditto storage and synchronisation layer from the [original seminar prototype](https://github.com/dominikkipfer/DOLE/tree/seminar-project) with a transparent Rust implementation. DOLE is a research prototype, not a production payment system.
 
 ## How It Works
