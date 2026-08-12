@@ -6,6 +6,11 @@
 	<array>
 		<string>TAG</string>
 	</array>
+	<key>com.apple.developer.nfc.readersession.families</key>
+	<array>
+		<string>NDEF</string>
+		<string>TAG</string>
+	</array>
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:dominikkipfer.github.io</string>
