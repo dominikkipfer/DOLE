@@ -8,7 +8,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>dole.iosApp</string>
+			<string>com.dominikkipfer.dole.ios</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>dole</string>

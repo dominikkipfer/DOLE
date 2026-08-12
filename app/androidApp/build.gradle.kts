@@ -30,6 +30,18 @@ android {
         targetCompatibility = JavaVersion.toVersion(jdkVersion.toInt())
     }
 
+    signingConfigs {
+        create("ciRelease") {
+            val keystorePath = System.getenv("ANDROID_KEYSTORE_FILE")
+            if (!keystorePath.isNullOrBlank()) {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "dole.app"
         targetSdk = libs.versions.android.compile.sdk.get().toInt()
@@ -45,6 +57,9 @@ android {
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt")
             )
+            if (!System.getenv("ANDROID_KEYSTORE_FILE").isNullOrBlank()) {
+                signingConfig = signingConfigs.getByName("ciRelease")
+            }
         }
     }
 }

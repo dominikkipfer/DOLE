@@ -51,6 +51,12 @@ jobs:
     name: Build Android (APK/AAB)
     runs-on: ubuntu-latest
 
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
     steps:
       - name: Check out code
         uses: actions/checkout@v7
@@ -79,6 +85,12 @@ jobs:
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
+
+      - name: Prepare Android signing key
+        run: |
+          set -euo pipefail
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/dole-release-key.jks"
+          echo "ANDROID_KEYSTORE_FILE=${RUNNER_TEMP}/dole-release-key.jks" >> "${GITHUB_ENV}"
 
       - name: Build release APK and AAB
         run: |
@@ -157,17 +169,7 @@ jobs:
           while IFS= read -r -d '' installer; do
             installers+=("${installer}")
           done < <(
-            find app/desktopApp/build/compose/binaries \
-              -type f \
-              \( \
-                -iname '*.dmg' -o \
-                -iname '*.pkg' -o \
-                -iname '*.deb' -o \
-                -iname '*.rpm' -o \
-                -iname '*.msi' -o \
-                -iname '*.exe' \
-              \) \
-              -print0
+            find app/desktopApp/build/compose/binaries -type f \( -iname '*.dmg' -o -iname '*.pkg' -o -iname '*.deb' -o -iname '*.rpm' -o -iname '*.msi' -o -iname '*.exe' \) -print0
           )
 
           if (( ${#installers[@]} == 0 )); then
@@ -239,11 +241,7 @@ jobs:
           cp -R app/shared/build/XCFrameworks release/ios/
           cp -R app/shared/build/generated/uniffi/swift release/ios/uniffi-swift
 
-          for target in \
-            aarch64-apple-ios \
-            aarch64-apple-ios-sim \
-            x86_64-apple-ios
-          do
+          for target in aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios; do
             library="core/target/${target}/release/libcore.a"
             if [[ -f "${library}" ]]; then
               cp "${library}" "release/ios/libcore-${target}.a"
@@ -265,6 +263,131 @@ jobs:
           path: release/DOLE-iOS-Artifacts.zip
           if-no-files-found: error
           retention-days: 14
+
+  testflight:
+    name: iOS TestFlight
+    if: github.ref_name == 'main' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      DOLE_DEVELOPMENT_TEAM: ${{ vars.DEVELOPMENT_TEAM }}
+      DOLE_IOS_BUNDLE_IDENTIFIER: ${{ vars.DOLE_IOS_BUNDLE_IDENTIFIER }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: 21
+
+      - name: Install Rust for iOS
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - name: Prepare signing keychain and provisioning profile
+        env:
+          IOS_DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERT_BASE64 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          IOS_DISTRIBUTION_PROFILE_BASE64: ${{ secrets.IOS_DISTRIBUTION_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          : "${IOS_DIST_CERT_BASE64:?missing IOS_DIST_CERT_BASE64}"
+          : "${IOS_DIST_CERT_PASSWORD:?missing IOS_DIST_CERT_PASSWORD}"
+          : "${KEYCHAIN_PASSWORD:?missing KEYCHAIN_PASSWORD}"
+          : "${IOS_DISTRIBUTION_PROFILE_BASE64:?missing IOS_DISTRIBUTION_PROFILE_BASE64}"
+
+          KEYCHAIN="$RUNNER_TEMP/dole-signing.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          printf '%s' "$IOS_DIST_CERT_BASE64" | base64 -D > "$RUNNER_TEMP/dole-distribution.p12"
+          security import "$RUNNER_TEMP/dole-distribution.p12" -P "$IOS_DIST_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          security find-identity -v -p codesigning "$KEYCHAIN"
+
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILE_DIR"
+          printf '%s' "$IOS_DISTRIBUTION_PROFILE_BASE64" | base64 -D > "$PROFILE_DIR/DOLE_iOS_Distribution.mobileprovision"
+          security cms -D -i "$PROFILE_DIR/DOLE_iOS_Distribution.mobileprovision" > "$RUNNER_TEMP/dole-profile.plist"
+          DOLE_PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$RUNNER_TEMP/dole-profile.plist")"
+          PROFILE_APP_ID="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$RUNNER_TEMP/dole-profile.plist")"
+          case "$PROFILE_APP_ID" in
+            *."$DOLE_IOS_BUNDLE_IDENTIFIER") ;;
+            *) echo "::error::Provisioning profile application identifier does not match ${DOLE_IOS_BUNDLE_IDENTIFIER}."; exit 1 ;;
+          esac
+          echo "DOLE_PROFILE_NAME=$DOLE_PROFILE_NAME" >> "$GITHUB_ENV"
+
+      - name: Archive for App Store Connect
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          : "${DOLE_DEVELOPMENT_TEAM:?missing DEVELOPMENT_TEAM variable}"
+          : "${DOLE_PROFILE_NAME:?missing provisioning profile name}"
+          xcodebuild archive \
+            -project app/iosApp/iosApp.xcodeproj \
+            -scheme iosApp \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/DOLE.xcarchive" \
+            -quiet \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            DEVELOPMENT_TEAM="$DOLE_DEVELOPMENT_TEAM" \
+            PROVISIONING_PROFILE_SPECIFIER="$DOLE_PROFILE_NAME" \
+            CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGNING_ALLOWED=YES
+
+      - name: Export the signed IPA
+        run: |
+          set -euo pipefail
+          EXPORT_OPTS="$RUNNER_TEMP/ExportOptions.plist"
+          cat > "$EXPORT_OPTS" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>app-store-connect</string>
+              <key>teamID</key>
+              <string>${DOLE_DEVELOPMENT_TEAM}</string>
+              <key>signingStyle</key>
+              <string>manual</string>
+              <key>provisioningProfiles</key>
+              <dict>
+                  <key>${DOLE_IOS_BUNDLE_IDENTIFIER}</key>
+                  <string>${DOLE_PROFILE_NAME}</string>
+              </dict>
+              <key>stripSwiftSymbols</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/DOLE.xcarchive" -exportPath "$RUNNER_TEMP/export" -exportOptionsPlist "$EXPORT_OPTS" -quiet
+          test -f "$RUNNER_TEMP/export/iosApp.ipa"
+
+      - name: Upload to TestFlight
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+        run: |
+          set -euo pipefail
+          : "${APP_STORE_CONNECT_KEY_ID:?missing APP_STORE_CONNECT_KEY_ID}"
+          : "${APP_STORE_CONNECT_ISSUER_ID:?missing APP_STORE_CONNECT_ISSUER_ID}"
+          : "${APP_STORE_CONNECT_API_KEY:?missing APP_STORE_CONNECT_API_KEY}"
+          KEY_DIR="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$KEY_DIR"
+          printf '%s' "$APP_STORE_CONNECT_API_KEY" | base64 -D > "$KEY_DIR/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+          chmod 600 "$KEY_DIR/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+          xcrun altool --upload-app -f "$RUNNER_TEMP/export/iosApp.ipa" -t ios --apiKey "$APP_STORE_CONNECT_KEY_ID" --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID" --verbose
 
   create-release:
     name: Create DOLE release
@@ -292,7 +415,14 @@ jobs:
           mkdir -p release-files
 
           while IFS= read -r -d '' file; do
-            destination="release-files/$(basename "${file}")"
+            case "${file##*.}" in
+              apk)                 name="DOLE.apk" ;;
+              aab)                 name="DOLE.aab" ;;
+              dmg|pkg|deb|rpm|msi|exe) name="DOLE.${file##*.}" ;;
+              *)                   name="$(basename "${file}")" ;;
+            esac
+
+            destination="release-files/${name}"
 
             if [[ -e "${destination}" ]]; then
               echo "Duplicate release filename: ${destination}" >&2
@@ -301,20 +431,7 @@ jobs:
 
             cp "${file}" "${destination}"
           done < <(
-            find downloaded-artifacts -type f \
-              \( \
-                -iname '*.apk' -o \
-                -iname '*.aab' -o \
-                -iname '*.cap' -o \
-                -iname '*.dmg' -o \
-                -iname '*.pkg' -o \
-                -iname '*.deb' -o \
-                -iname '*.rpm' -o \
-                -iname '*.msi' -o \
-                -iname '*.exe' -o \
-                -iname '*.zip' \
-              \) \
-              -print0
+            find downloaded-artifacts -type f \( -iname '*.apk' -o -iname '*.aab' -o -iname '*.cap' -o -iname '*.dmg' -o -iname '*.pkg' -o -iname '*.deb' -o -iname '*.rpm' -o -iname '*.msi' -o -iname '*.exe' -o -iname '*.zip' \) -print0
           )
 
           file_count="$(find release-files -maxdepth 1 -type f | wc -l)"
@@ -324,11 +441,6 @@ jobs:
             echo "Expected at least 7 files: APK, AAB, CAP, three desktop installers and iOS ZIP." >&2
             exit 1
           fi
-
-          (
-            cd release-files
-            sha256sum * > SHA256SUMS.txt
-          )
 
           echo "Release files:"
           find release-files -maxdepth 1 -type f -printf '%f\n' | sort
@@ -343,14 +455,12 @@ jobs:
 
           if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
             release_tag="release-${GITHUB_RUN_NUMBER}-${short_sha}"
-            release_name="DOLE Release #${GITHUB_RUN_NUMBER} - ${short_sha}"
-            release_type="Stable release"
+            release_name="DOLE Release"
             prerelease="false"
             make_latest="true"
           else
             release_tag="${GITHUB_REF_NAME}-latest"
-            release_name="DOLE Development Snapshot [${GITHUB_REF_NAME}] - ${short_sha}"
-            release_type="Development pre-release"
+            release_name="DOLE Snapshot [${GITHUB_REF_NAME}]"
             prerelease="true"
             make_latest="false"
           fi
@@ -358,7 +468,6 @@ jobs:
           {
             echo "tag=${release_tag}"
             echo "name=${release_name}"
-            echo "type=${release_type}"
             echo "prerelease=${prerelease}"
             echo "make_latest=${make_latest}"
           } >> "${GITHUB_OUTPUT}"
@@ -378,24 +487,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: ${{ steps.release.outputs.name }}
           body: |
-            ## Release overview
-
-            This release provides the latest DOLE application packages and supporting artifacts for the available platforms.
-
-            ### Build information
-
-            | Property | Value |
-            |---|---|
-            | Release type | **${{ steps.release.outputs.type }}** |
-            | Source branch | `${{ github.ref_name }}` |
-            | Commit | [`${{ github.sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) |
-            | Workflow run | [#${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
-
-            ### Packages
-
-            The downloadable assets for Android, desktop, iOS, and the Java Card applet are listed below.
-
-            > Development snapshots are intended for testing and evaluation. Stable releases are published from the `main` branch.
+            DOLE application packages for Android, desktop, and iOS, including the Java Card applet.
           draft: false
           prerelease: ${{ steps.release.outputs.prerelease }}
           make_latest: ${{ steps.release.outputs.make_latest }}
