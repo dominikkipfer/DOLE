@@ -283,10 +283,22 @@ jobs:
           distribution: zulu
           java-version: 21
 
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
       - name: Install Rust for iOS
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - name: Cache Rust and Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Build shared XCFramework
+        run: ./gradlew :app:shared:assembleSharedReleaseXCFramework --no-daemon
 
       - name: Prepare signing keychain and provisioning profile
         env:
